@@ -1,0 +1,6 @@
+# Written by Claude Code each time it loads a mod from this folder (API types + a tsconfig that extends them)
+.claude-plugin/types/
+plugins/*/.claude-plugin/types/
+plugins/*/tsconfig.json
+.DS_Store
+node_modules/

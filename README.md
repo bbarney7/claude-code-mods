@@ -1,0 +1,41 @@
+# claude-code-mods
+
+Mods for [Claude Code](https://claude.com/claude-code): plugins of function hooks that add live panes, commands and tools inside a running Claude Code session, in the terminal or the desktop app's Code tab.
+
+| Mod | What it does |
+| --- | --- |
+| [second-opinion](plugins/second-opinion) | An **agent room**: one chat with OpenAI Codex, Cursor and a second Claude, with `@mentions` and agent-to-agent hand-offs. Also one-shot `/second-opinion` reviews of your diff and `/delegate` implementations. |
+
+## Install
+
+In a Claude Code terminal session:
+
+```
+/plugin install second-opinion --marketplace bbarney7/claude-code-mods
+```
+
+Answer `y` to add the marketplace, pick a scope (user is the usual choice), and the mod is active in that session. Sessions started afterwards load it too, including the desktop app's Code tab.
+
+While this repository is private, installing needs a GitHub login with access to it (Claude Code clones it with your git credentials).
+
+Each mod's README lists what else it needs. `second-opinion`, for example, uses the Codex, Cursor and Claude ACP adapters.
+
+## Before you install any mod
+
+A mod is code that runs inside Claude Code with your permissions. It isn't sandboxed: it can read files, run programs, rewrite tool calls and talk to the network. Read a mod's source before you install it, from this repo or any other. `claude plugin validate <folder>` lists every event a mod hooks and every engine call it makes. That's a quick way to see what it can do.
+
+## Developing
+
+Each mod is a folder under `plugins/` with three files: `.claude-plugin/plugin.json`, `hooks/hooks.json`, and the hooks module `hooks/register.tsx`. A mod that keeps state adds `types/index.d.ts`. To work on one from a clone:
+
+```
+claude --plugin-dir plugins/<mod>          # run it from disk; saving a file reloads it
+claude plugin validate plugins/<mod>       # what the engine will load, and anything it would refuse
+claude plugin test plugins/<mod>           # its *.test.ts files
+```
+
+To add a mod, create its folder under `plugins/`, add an entry to `.claude-plugin/marketplace.json`, and run `claude plugin validate .` at the repository root.
+
+## License
+
+MIT

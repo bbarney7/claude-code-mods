@@ -1,0 +1,58 @@
+{
+  "name": "second-opinion",
+  "version": "0.4.0",
+  "description": "Codex, Cursor and a second Claude inside Claude Code: an agent room (one chat, @mentions, handoffs) plus one-shot reviews and delegation",
+  "author": {
+    "name": "Brennen Barney"
+  },
+  "homepage": "https://github.com/bbarney7/claude-code-mods/tree/main/plugins/second-opinion",
+  "repository": "https://github.com/bbarney7/claude-code-mods",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "cursor",
+    "multi-agent",
+    "acp",
+    "code-review",
+    "mod"
+  ],
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "roomSeed": {
+      "type": "string",
+      "title": "Room: context from the main Claude session",
+      "description": "What the room's agents (Codex, Cursor and the room's own Claude) learn about the main Claude conversation the room was opened from, when their session starts: none, the last turns, a summary the main Claude writes, or the full conversation (capped at 60,000 characters).",
+      "default": "recent",
+      "options": [
+        "none",
+        "recent",
+        "summary",
+        "full"
+      ]
+    },
+    "roomSeedTurns": {
+      "type": "number",
+      "title": "Room: turns to share when seeding 'recent'",
+      "description": "How many of the latest Claude-session turns a fresh room agent gets.",
+      "default": 10
+    },
+    "claudeReturn": {
+      "type": "string",
+      "title": "Room: context sent back to the main session",
+      "description": "What reaches the main Claude session when the room @mentions @main or you press Send room to main: just that message, the latest room messages, a summary of the room, or the whole room (capped at 30,000 characters).",
+      "default": "message",
+      "options": [
+        "message",
+        "recent",
+        "summary",
+        "full"
+      ]
+    },
+    "claudeReturnMessages": {
+      "type": "number",
+      "title": "Room: messages to send back for 'recent'",
+      "description": "How many of the latest room messages go with a message to Claude.",
+      "default": 8
+    }
+  }
+}
