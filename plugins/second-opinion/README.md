@@ -13,6 +13,8 @@ Bring OpenAI Codex, Cursor and a second Claude into Claude Code.
 /plugin install second-opinion --marketplace bbarney7/claude-code-mods
 ```
 
+The install may say "4 userConfig options not yet set". That's fine: the defaults apply, and you can change them any time in `/config` (see [Context settings](#context-settings-config)).
+
 ### Requirements
 
 - **Claude Code 2.1.291 or newer.** Mods shipped in 2.1.287. This mod is developed and tested on 2.1.291.
