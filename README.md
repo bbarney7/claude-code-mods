@@ -5,6 +5,7 @@ Mods for [Claude Code](https://claude.com/claude-code): plugins of function hook
 | Mod | What it does |
 | --- | --- |
 | [second-opinion](plugins/second-opinion) | An **agent room**: one chat with OpenAI Codex, Cursor and a second Claude, with `@mentions` and agent-to-agent hand-offs. Also one-shot `/second-opinion` reviews of your diff and `/delegate` implementations. |
+| [mod-firewall](plugins/mod-firewall) | A firewall for mods. Every network request, program, secrets-file read and secret env var another mod touches goes through it: ask, block or log. It also catches a mod trying to send your `.env` values or API keys anywhere. |
 
 ## Install
 
@@ -22,7 +23,7 @@ Each mod's README lists what else it needs. `second-opinion`, for example, uses 
 
 ## Before you install any mod
 
-A mod is code that runs inside Claude Code with your permissions. It isn't sandboxed: it can read files, run programs, rewrite tool calls and talk to the network. Read a mod's source before you install it, from this repo or any other. `claude plugin validate <folder>` lists every event a mod hooks and every engine call it makes. That's a quick way to see what it can do.
+A mod is code that runs inside Claude Code with your permissions. It isn't sandboxed: it can read files, run programs, rewrite tool calls and talk to the network. Read a mod's source before you install it, from this repo or any other. Or install [mod-firewall](plugins/mod-firewall) to watch them for you. `claude plugin validate <folder>` lists every event a mod hooks and every engine call it makes. That's a quick way to see what it can do.
 
 ## Developing
 

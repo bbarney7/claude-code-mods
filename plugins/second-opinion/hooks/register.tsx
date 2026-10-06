@@ -265,6 +265,7 @@ let seq = 0
 let ticker: { cancel: () => void } | undefined
 let bridge: { socket: string; ready: Promise<boolean>; markReady: (ok: boolean) => void } | undefined
 let cwd = ''
+let bridgeError = ''
 const primed = new Set<Agent>()
 const hops = new Map<string, number>()
 const askedBy = new Map<string, Speaker>()
@@ -355,6 +356,7 @@ async function ensureBridge($: EngineInterface): Promise<string | undefined> {
     const socket = `/tmp/second-opinion-${crypto.randomUUID().slice(0, 8)}.sock`
     bridge = { socket, ready, markReady }
     cwd = await $.session.root()
+    bridgeError = ''
     primed.clear()
     void readBridge($, socket)
     $.clock.after(15_000, () => bridge?.markReady(false))
@@ -386,7 +388,9 @@ async function readBridge($: EngineInterface, socket: string) {
       }
     }
   } catch (error) {
-    stderr += String(error)
+    // A refusal from another mod (a firewall) or a missing node lands here: keep it for the message.
+    bridgeError = String(error).replace(/^HooksError:\s*/, '')
+    stderr += bridgeError
   }
   bridge?.markReady(false)
   bridge = undefined
@@ -401,7 +405,7 @@ async function readBridge($: EngineInterface, socket: string) {
 
 async function bridgePost($: EngineInterface, path: string, body: Record<string, unknown>) {
   const socket = await ensureBridge($)
-  if (!socket) throw new Error('the agent bridge did not start (is node on PATH?)')
+  if (!socket) throw new Error(`the agent bridge did not start: ${bridgeError || 'is node on PATH?'}`)
   const response = await $.http.fetch(`http://bridge${path}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },

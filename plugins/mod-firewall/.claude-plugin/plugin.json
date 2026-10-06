@@ -1,0 +1,34 @@
+{
+  "name": "mod-firewall",
+  "version": "0.1.0",
+  "description": "A firewall for Claude Code mods: watches what every other mod does (network, processes, secret files, env vars) and asks, blocks or logs",
+  "author": {
+    "name": "Brennen Barney"
+  },
+  "homepage": "https://github.com/bbarney7/claude-code-mods/tree/main/plugins/mod-firewall",
+  "repository": "https://github.com/bbarney7/claude-code-mods",
+  "license": "MIT",
+  "keywords": ["security", "firewall", "mods", "secrets", "dlp"],
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "mode": {
+      "type": "string",
+      "title": "Mod firewall: mode",
+      "description": "ask: sensitive calls by a mod (network, processes, secret files, secret env vars, writes outside the project) open a dialog. strict: they are blocked unless you trust the mod. audit: allow everything and only log.",
+      "default": "ask",
+      "options": ["ask", "strict", "audit"]
+    },
+    "trusted": {
+      "type": "string",
+      "title": "Mod firewall: trusted mods",
+      "description": "Comma-separated mod names that may make sensitive calls without asking (critical ones, like sending a secret, still ask). Mods you trust from the dialog are remembered separately.",
+      "default": ""
+    },
+    "refuseRiskyAtLoad": {
+      "type": "boolean",
+      "title": "Mod firewall: refuse risky mods at load",
+      "description": "Refuse to load an untrusted mod that uses the network together with processes, files, env vars or the transcript. Only mods that load after the firewall can be refused.",
+      "default": false
+    }
+  }
+}

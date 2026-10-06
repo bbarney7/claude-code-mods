@@ -9,12 +9,22 @@
     {
       "name": "second-opinion",
       "description": "Codex, Cursor and a second Claude inside Claude Code: an agent room (one chat, @mentions, handoffs) plus one-shot reviews and delegation",
-      "version": "0.4.0",
+      "version": "0.4.1",
       "author": {
         "name": "Brennen Barney"
       },
       "source": "./plugins/second-opinion",
       "category": "development"
+    },
+    {
+      "name": "mod-firewall",
+      "description": "A firewall for Claude Code mods: watches what every other mod does (network, processes, secret files, env vars) and asks, blocks or logs",
+      "version": "0.1.0",
+      "author": {
+        "name": "Brennen Barney"
+      },
+      "source": "./plugins/mod-firewall",
+      "category": "security"
     }
   ]
 }
