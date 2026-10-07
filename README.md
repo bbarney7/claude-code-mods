@@ -7,6 +7,7 @@ Mods for [Claude Code](https://claude.com/claude-code): plugins of function hook
 | [second-opinion](plugins/second-opinion) | An **agent room**: one chat with OpenAI Codex, Cursor and a second Claude, with `@mentions` and agent-to-agent hand-offs. Also one-shot `/second-opinion` reviews of your diff and `/delegate` implementations. |
 | [mod-firewall](plugins/mod-firewall) | A firewall for mods. Every network request, program, secrets-file read and secret env var another mod touches goes through it: ask, block or log. It also catches a mod trying to send your `.env` values or API keys anywhere. |
 | [switchboard](plugins/switchboard) | See and message your other Claude Code sessions: who's working on what, `/dm`, `/broadcast`, `/handoff`, an inbox that holds incoming messages for approval, and warnings when another session edited the same file. |
+| [cache-keeper](plugins/cache-keeper) | Keeps an idle session's prompt cache warm while you're away, so coming back doesn't re-write the whole conversation. You choose for how long, and whether it then lets the cache expire, compacts, or clears with a handoff. |
 
 ## Install
 

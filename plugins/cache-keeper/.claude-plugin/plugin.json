@@ -1,0 +1,45 @@
+{
+  "name": "cache-keeper",
+  "version": "0.1.0",
+  "description": "Keeps the prompt cache of an idle session warm with a tiny side question before it expires, for as long as you choose, then lets it expire, compacts, or clears with a handoff",
+  "author": {
+    "name": "Brennen Barney"
+  },
+  "homepage": "https://github.com/bbarney7/claude-code-mods/tree/main/plugins/cache-keeper",
+  "repository": "https://github.com/bbarney7/claude-code-mods",
+  "license": "MIT",
+  "keywords": ["cache", "prompt-caching", "cost", "compaction", "handoff"],
+  "userConfig": {
+    "keepWarm": {
+      "type": "boolean",
+      "title": "Cache keeper: keep the cache warm while you're away",
+      "description": "Shortly before the cache would expire, ask Claude a one-word side question over the conversation. It reads the cache (a twentieth to a tenth of the input price) and restarts its timer, so the next message doesn't re-write the whole conversation.",
+      "default": true
+    },
+    "keepWarmHours": {
+      "type": "number",
+      "title": "Cache keeper: keep it warm for (hours after your last message)",
+      "description": "Keep-warms stop once this long has passed since Claude last answered you. Then the action below runs before the cache expires.",
+      "default": 2
+    },
+    "atExpiry": {
+      "type": "string",
+      "title": "Cache keeper: before the cache finally expires",
+      "description": "nothing: let it expire. compact: compact the conversation while the cache is still warm, so the next message re-caches only the summary. handoff: Claude writes a handoff, the conversation is cleared, and the handoff is kept for the next message.",
+      "default": "nothing",
+      "options": ["nothing", "compact", "handoff"]
+    },
+    "cacheTtlMinutes": {
+      "type": "number",
+      "title": "Cache keeper: cache lifetime (minutes)",
+      "description": "How long the cache lives after its last use: 60 on Claude subscriptions, 5 for most API-key sessions.",
+      "default": 60
+    },
+    "leadMinutes": {
+      "type": "number",
+      "title": "Cache keeper: act this many minutes before expiry",
+      "description": "How early to send the keep-warm, compact or handoff. At most half the cache lifetime.",
+      "default": 5
+    }
+  }
+}
