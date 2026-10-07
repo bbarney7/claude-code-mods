@@ -25,6 +25,16 @@
       },
       "source": "./plugins/mod-firewall",
       "category": "security"
+    },
+    {
+      "name": "switchboard",
+      "description": "See and message your other Claude Code sessions: who is working on what, direct messages, broadcast, handoffs, an inbox that holds incoming messages for approval, and live warnings when another session edited the same file",
+      "version": "0.1.0",
+      "author": {
+        "name": "Brennen Barney"
+      },
+      "source": "./plugins/switchboard",
+      "category": "productivity"
     }
   ]
 }
