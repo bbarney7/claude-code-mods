@@ -630,6 +630,10 @@ async function answerPermission($: EngineInterface, id: string, optionId: string
   await bridgePost($, '/permission', { id, optionId })
 }
 
+async function setDefaultAgent($: EngineInterface, agent: Agent) {
+  await update($, room, r => ({ ...r, defaultAgent: agent }))
+}
+
 async function interrupt($: EngineInterface) {
   const state = await read($, room)
   for (const agent of AGENTS) {
@@ -704,25 +708,42 @@ async function renderRoom($: EngineInterface, e: Parameters<EngineInterface['ui'
           </Box>
         </Box>
       ))}
-      <Box marginTop={1}>
-        {Input ? (
-          <Input
-            key={`room-${state.messages.length}`}
-            placeholder="Message the room… (@codex @cursor @claude @main)"
-            submitLabel="send"
-            autoFocus
-            onSubmit={(value: string) => {
-              if (value.trim()) void post($, 'you', value.trim())
-            }}
-          />
-        ) : (
-          <Text dimColor>{'Send with /ask @codex <message>'}</Text>
-        )}
+      <Box marginTop={1} flexDirection="column" width="100%" borderStyle="round" borderColor={COLOR[state.defaultAgent]} paddingX={1}>
+        <Box gap={1} alignItems="center" flexWrap="wrap">
+          <Text dimColor>To</Text>
+          {AGENTS.map(agent => (
+            <Button
+              key={`to-${agent}`}
+              label={`${DOT[state.status[agent]]} @${agent}`}
+              variant={agent === state.defaultAgent ? 'primary' : 'secondary'}
+              dimColor={agent !== state.defaultAgent}
+              onPress={() => setDefaultAgent($, agent)}
+            />
+          ))}
+        </Box>
+        <Box width="100%" marginTop={1}>
+          {Input ? (
+            <Input
+              key={`room-${state.messages.length}`}
+              placeholder={`Message ${LABEL[state.defaultAgent]}…`}
+              submitLabel="send"
+              autoFocus
+              onSubmit={(value: string) => {
+                if (value.trim()) void post($, 'you', value.trim())
+              }}
+            />
+          ) : (
+            <Text dimColor>{`Send with /ask @${state.defaultAgent} <message>`}</Text>
+          )}
+        </Box>
       </Box>
-      <Box>
-        {isBusy && <Button key="interrupt" label="Interrupt" onPress={() => interrupt($)} />}
-        {state.messages.length > 0 && <Button key="share" label="Send room to main" onPress={() => sendRoomToMain($)} />}
-        {state.messages.length > 0 && <Button key="new" label="New chat" onPress={() => resetRoom($)} />}
+      <Box width="100%" justifyContent="space-between" alignItems="center" flexWrap="wrap" gap={1}>
+        <Text dimColor>{'@mention to pick who answers · @main reaches your session'}</Text>
+        <Box gap={1}>
+          {isBusy && <Button key="interrupt" label="Interrupt" variant="secondary" onPress={() => interrupt($)} />}
+          {state.messages.length > 0 && <Button key="share" label="Send room to main" variant="secondary" onPress={() => sendRoomToMain($)} />}
+          {state.messages.length > 0 && <Button key="new" label="New chat" variant="secondary" dimColor onPress={() => resetRoom($)} />}
+        </Box>
       </Box>
     </Box>
   )
