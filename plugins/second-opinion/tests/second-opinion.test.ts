@@ -6,6 +6,7 @@ import {
   handoffTargets,
   historyFor,
   isBareAck,
+  routesToRoom,
   normalizeAsk,
   parseDelegate,
   parseMentions,
@@ -116,21 +117,40 @@ test('the review pane starts empty with a hint', async $ => {
   }
 })
 
-test('the agent room shows who is there and a composer, or a hint on mobile', async $ => {
-  for (const surface of ['terminal', 'desktop'] as const) {
+test('the agent room is a chat transcript with a way to start typing into it', async $ => {
+  for (const surface of ['terminal', 'desktop', 'mobile'] as const) {
     const ui = await $.ui.mount({ plugin: 'second-opinion', surface, component: 'Pane', requestId: 'agent-room', props: PANE_PROPS })
     expect(await ui.find({ type: 'Text', text: /@main reaches your session/ })).toBeDefined()
-    expect(await ui.find({ key: 'room-0' })).toBeDefined()
-    expect(await ui.find({ key: 'to-codex' })).toBeDefined()
-    // Picking a chip changes who the next message goes to.
-    await ui.press({ key: 'to-cursor' })
-    expect((await ui.find({ key: 'room-0' }))?.props).toMatchObject({ placeholder: 'Message Cursor…' })
-    await ui.press({ key: 'to-codex' })
+    expect(await ui.find({ key: 'compose' })).toBeDefined()
     await ui.unmount()
   }
-  const phone = await $.ui.mount({ plugin: 'second-opinion', surface: 'mobile', component: 'Pane', requestId: 'agent-room', props: PANE_PROPS })
-  expect(await phone.find({ type: 'Text', text: /Send with \/ask @codex/ })).toBeDefined()
-  await phone.unmount()
+})
+
+test('/room hands the prompt box to the room, and the band above it picks who answers', async ($, on) => {
+  on('ui.open', () => ({ value: { isOpen: true } }) as never)
+  on('ui.invalidate', () => ({ value: undefined }) as never)
+  // The engine's own band beneath the plugin's: empty here.
+  on('ui.render', { component: 'AbovePrompt' }, ($, e) => $.ui.resolve(e).Box({ key: 'engine-band' }))
+  await $.command.run({ command: 'room', args: '' } as never)
+  const band = await $.ui.mount({ plugin: 'second-opinion', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 80 } as never })
+  expect(await band.find({ key: 'to-codex' })).toBeDefined()
+  await band.press({ key: 'to-cursor' })
+  const pane = await $.ui.mount({ plugin: 'second-opinion', surface: 'terminal', component: 'Pane', requestId: 'agent-room', props: PANE_PROPS })
+  expect(await pane.find({ type: 'Text', text: /to @cursor/ })).toBeDefined()
+  await band.press({ key: 'to-main' })
+  expect(await band.find({ key: 'to-codex' })).toBeUndefined()
+  await pane.unmount()
+  await band.unmount()
+})
+
+test('only the person\'s own prompts go to the room, and only while it has the prompt box', async () => {
+  expect(routesToRoom(true, 'what is 2+2', { kind: 'composer' })).toBe(true)
+  expect(routesToRoom(true, 'what is 2+2', { kind: 'sdk' })).toBe(true)
+  expect(routesToRoom(true, 'what is 2+2', undefined)).toBe(true)
+  expect(routesToRoom(false, 'what is 2+2', { kind: 'composer' })).toBe(false)
+  expect(routesToRoom(true, '/room off', { kind: 'composer' })).toBe(false)
+  expect(routesToRoom(true, 'room summary', { kind: 'plugin' })).toBe(false)
+  expect(routesToRoom(true, '   ', { kind: 'composer' })).toBe(false)
 })
 
 test('answering whoever asked is not a handoff; bringing in someone else is', async () => {

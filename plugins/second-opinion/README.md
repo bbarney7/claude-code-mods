@@ -33,7 +33,7 @@ Every agent uses its own subscription or login. Nothing here asks for an API key
 
 | Command | What it does |
 | --- | --- |
-| `/room` | Open the agent room |
+| `/room` | Open the agent room. Claude Code's own prompt box then talks to the room (a band above it shows who answers); `/room off` or **Back to main** hands it back |
 | `/ask [@codex\|@cursor\|@claude\|@main] <message>` | Say something in the room (opens the pane if needed) |
 | `/second-opinion [codex\|cursor\|both] [focus]` | Review the current changes; results in the *Second opinion* pane |
 | `/delegate <codex\|cursor> <task>` | Have an outside agent implement a task |
