@@ -645,106 +645,106 @@ async function interrupt($: EngineInterface) {
 
 const DOT: Record<AgentState, string> = { idle: '○', starting: '◌', ready: '●', busy: '◉', error: '✕' }
 
-async function renderRoom($: EngineInterface, e: Parameters<EngineInterface['ui']['resolve']>[0]) {
+async function renderRoom($: EngineInterface, e: Parameters<EngineInterface['ui']['resolve']>[0], bodyRows: number) {
   const elements = $.ui.resolve(e)
   const { Box, Text, Markdown, Button } = elements
   // The mobile surface has no text field; there a message goes through /ask.
   const Input = e.surface !== 'mobile' && 'Input' in elements ? elements.Input : undefined
   const state = await read($, room)
   const isBusy = AGENTS.some(agent => state.status[agent] === 'busy')
+  const to = state.defaultAgent
 
+  // Laid out like a chat app: the conversation fills the pane and the composer sits at its foot.
   return (
-    <Box flexDirection="column">
-      <Text dimColor>
-        {AGENTS.map(agent => `${DOT[state.status[agent]]} ${LABEL[agent]} ${state.status[agent]}`).join('   ')}
-        {`   · default @${state.defaultAgent}`}
-      </Text>
-      <Text dimColor>
-        {`context in: ${config.roomSeed}${config.roomSeed === 'recent' ? ` ${config.roomSeedTurns} turns` : ''} · back to main: ${config.claudeReturn}${config.claudeReturn === 'recent' ? ` ${config.claudeReturnMessages} msgs` : ''} · /config to change`}
-      </Text>
-      {state.detail ? <Text color="red">{state.detail}</Text> : null}
-      {state.messages.length === 0 && (
-        <Text dimColor>
-          {'One chat with Codex, Cursor and a separate Claude. @codex, @cursor or @claude picks who answers, @main reaches your main session, and agents can @mention each other to hand off.'}
-        </Text>
-      )}
-      {state.messages.slice(-30).map(m =>
-        m.from === 'system' ? (
-          <Text key={m.id} dimColor>
-            {m.text}
-          </Text>
-        ) : (
-          <Box key={m.id} flexDirection="column" marginTop={1}>
-            <Text bold color={m.isError ? 'red' : COLOR[m.from]}>
-              {`${LABEL[m.from]}${m.to?.length ? ` → ${m.to.map(t => `@${t}`).join(' ')}` : ''}${m.isStreaming ? ' …' : ''}`}
+    <Box flexDirection="column" width="100%" minHeight={bodyRows > 0 ? bodyRows : undefined}>
+      <Box flexDirection="column" flexGrow={1} justifyContent="flex-end">
+        {state.messages.length === 0 && (
+          <Box flexDirection="column" alignItems="center" paddingX={2}>
+            <Text bold>Agent room</Text>
+            <Text dimColor>
+              {'Codex, Cursor and a second Claude in one chat. @mention picks who answers, @main reaches your session, and agents can hand off to each other.'}
             </Text>
-            {(m.tools ?? []).slice(-3).map(tool => (
-              <Text key={`${m.id}-${tool.id}`} dimColor>
-                {`↳ ${tool.title}${tool.status ? ` · ${tool.status}` : ''}`}
+          </Box>
+        )}
+        {state.messages.slice(-30).map(m =>
+          m.from === 'system' ? (
+            <Text key={m.id} dimColor>
+              {m.text}
+            </Text>
+          ) : (
+            <Box key={m.id} flexDirection="column" marginTop={1}>
+              <Text bold color={m.isError ? 'red' : COLOR[m.from]}>
+                {`${LABEL[m.from]}${m.to?.length ? ` → ${m.to.map(t => `@${t}`).join(' ')}` : ''}${m.isStreaming ? ' …' : ''}`}
               </Text>
-            ))}
-            {m.from === 'you' || m.from === 'main' ? (
-              <Text>{m.text}</Text>
-            ) : m.text ? (
-              <Markdown text={m.text} />
-            ) : (
-              <Text dimColor>thinking…</Text>
-            )}
+              {(m.tools ?? []).slice(-3).map(tool => (
+                <Text key={`${m.id}-${tool.id}`} dimColor>
+                  {`↳ ${tool.title}${tool.status ? ` · ${tool.status}` : ''}`}
+                </Text>
+              ))}
+              {m.from === 'you' || m.from === 'main' ? (
+                <Text>{m.text}</Text>
+              ) : m.text ? (
+                <Markdown text={m.text} />
+              ) : (
+                <Text dimColor>thinking…</Text>
+              )}
+            </Box>
+          ),
+        )}
+        {state.detail ? <Text color="red">{state.detail}</Text> : null}
+        {state.permissions.map(card => (
+          <Box key={card.id} flexDirection="column" marginTop={1} borderStyle="round" borderColor="yellow" paddingX={1}>
+            <Text bold>{`${LABEL[card.agent]} wants to: ${card.title}`}</Text>
+            <Box gap={1}>
+              {card.options.map(option => (
+                <Button
+                  key={`${card.id}-${option.optionId}`}
+                  label={option.name}
+                  onPress={() => answerPermission($, card.id, option.optionId)}
+                />
+              ))}
+              <Button key={`${card.id}-cancel`} label="Cancel" onPress={() => answerPermission($, card.id, null)} />
+            </Box>
           </Box>
-        ),
-      )}
-      {state.permissions.map(card => (
-        <Box key={card.id} flexDirection="column" marginTop={1} borderStyle="round" borderColor="yellow" paddingX={1}>
-          <Text bold>{`${LABEL[card.agent]} wants to: ${card.title}`}</Text>
-          <Box>
-            {card.options.map(option => (
-              <Button
-                key={`${card.id}-${option.optionId}`}
-                label={option.name}
-                onPress={() => answerPermission($, card.id, option.optionId)}
-              />
-            ))}
-            <Button key={`${card.id}-cancel`} label="Cancel" onPress={() => answerPermission($, card.id, null)} />
-          </Box>
-        </Box>
-      ))}
-      <Box marginTop={1} flexDirection="column" width="100%" borderStyle="round" borderColor={COLOR[state.defaultAgent]} paddingX={1}>
-        <Box gap={1} alignItems="center" flexWrap="wrap">
-          <Text dimColor>To</Text>
+        ))}
+      </Box>
+
+      <Box flexDirection="column" width="100%" marginTop={1} borderStyle="round" borderColor={COLOR[to]} paddingX={1}>
+        {Input ? (
+          <Input
+            key={`room-${state.messages.length}`}
+            placeholder={`Message ${LABEL[to]}…`}
+            submitLabel="send"
+            autoFocus
+            onSubmit={(value: string) => {
+              if (value.trim()) void post($, 'you', value.trim())
+            }}
+          />
+        ) : (
+          <Text dimColor>{`Send with /ask @${to} <message>`}</Text>
+        )}
+      </Box>
+      <Box width="100%" justifyContent="space-between" alignItems="center" flexWrap="wrap" gap={1} paddingX={1}>
+        <Box gap={1} alignItems="center">
           {AGENTS.map(agent => (
             <Button
               key={`to-${agent}`}
-              label={`${DOT[state.status[agent]]} @${agent}`}
-              variant={agent === state.defaultAgent ? 'primary' : 'secondary'}
-              dimColor={agent !== state.defaultAgent}
+              label={`${DOT[state.status[agent]]} ${LABEL[agent]}`}
+              variant={agent === to ? 'primary' : 'secondary'}
+              dimColor={agent !== to}
               onPress={() => setDefaultAgent($, agent)}
             />
           ))}
         </Box>
-        <Box width="100%" marginTop={1}>
-          {Input ? (
-            <Input
-              key={`room-${state.messages.length}`}
-              placeholder={`Message ${LABEL[state.defaultAgent]}…`}
-              submitLabel="send"
-              autoFocus
-              onSubmit={(value: string) => {
-                if (value.trim()) void post($, 'you', value.trim())
-              }}
-            />
-          ) : (
-            <Text dimColor>{`Send with /ask @${state.defaultAgent} <message>`}</Text>
-          )}
-        </Box>
-      </Box>
-      <Box width="100%" justifyContent="space-between" alignItems="center" flexWrap="wrap" gap={1}>
-        <Text dimColor>{'@mention to pick who answers · @main reaches your session'}</Text>
-        <Box gap={1}>
+        <Box gap={1} alignItems="center">
           {isBusy && <Button key="interrupt" label="Interrupt" variant="secondary" onPress={() => interrupt($)} />}
-          {state.messages.length > 0 && <Button key="share" label="Send room to main" variant="secondary" onPress={() => sendRoomToMain($)} />}
+          {state.messages.length > 0 && <Button key="share" label="Send to main" variant="secondary" dimColor onPress={() => sendRoomToMain($)} />}
           {state.messages.length > 0 && <Button key="new" label="New chat" variant="secondary" dimColor onPress={() => resetRoom($)} />}
         </Box>
       </Box>
+      <Text dimColor>
+        {`  context in: ${config.roomSeed}${config.roomSeed === 'recent' ? ` ${config.roomSeedTurns} turns` : ''} · back to main: ${config.claudeReturn}${config.claudeReturn === 'recent' ? ` ${config.claudeReturnMessages} msgs` : ''} · /config`}
+      </Text>
     </Box>
   )
 }
@@ -872,7 +872,7 @@ export const register: Register = (on, options) => {
     return { result: `${LABEL[run.agent]} (implement, ${run.status}, ${seconds(run, run.endedAt ?? 0)}):\n\n${run.result}` }
   }).catch(($, e, next) => ({ deny: `delegate_task failed (${next.error.kind}): ${next.error.message ?? 'no message'}` }))
 
-  on('ui.render', { component: 'Pane', requestId: 'agent-room' }, ($, e) => renderRoom($, e))
+  on('ui.render', { component: 'Pane', requestId: 'agent-room' }, ($, e) => renderRoom($, e, e.props.scroll?.bodyRows ?? 0))
 
   on('ui.render', { component: 'Pane', requestId: 'second-opinion' }, async ($, e) => {
     const { Box, Text, Markdown, Button } = $.ui.resolve(e)

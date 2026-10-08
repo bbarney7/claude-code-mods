@@ -119,14 +119,12 @@ test('the review pane starts empty with a hint', async $ => {
 test('the agent room shows who is there and a composer, or a hint on mobile', async $ => {
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ plugin: 'second-opinion', surface, component: 'Pane', requestId: 'agent-room', props: PANE_PROPS })
-    expect(await ui.find({ type: 'Text', text: /Codex idle/ })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /Claude idle/ })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /@main reaches your main session/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /@main reaches your session/ })).toBeDefined()
     expect(await ui.find({ key: 'room-0' })).toBeDefined()
     expect(await ui.find({ key: 'to-codex' })).toBeDefined()
     // Picking a chip changes who the next message goes to.
     await ui.press({ key: 'to-cursor' })
-    expect(await ui.find({ type: 'Text', text: /default @cursor/ })).toBeDefined()
+    expect((await ui.find({ key: 'room-0' }))?.props).toMatchObject({ placeholder: 'Message Cursor…' })
     await ui.press({ key: 'to-codex' })
     await ui.unmount()
   }
