@@ -6,6 +6,7 @@ import {
   handoffTargets,
   historyFor,
   isBareAck,
+  isLive,
   normalizeAsk,
   parseDelegate,
   parseMentions,
@@ -17,7 +18,8 @@ import {
   targetsOf,
 } from '../hooks/register'
 import type { RoomMessage } from '../types'
-import { edit } from '../hooks/composer'
+import { edit, mentionQuery, openMentions } from '../hooks/composer'
+import type { ComposerMention, ComposerState } from '../hooks/composer'
 
 const PANE_PROPS = {
   title: 'Pane',
@@ -125,6 +127,11 @@ test('the agent room: its own full-width message box on the desktop, the text fi
   await desktop.pointer({ type: 'down', x: 2, y: 1, button: 'left' })
   for (const key of ['h', 'i']) await desktop.key({ key, in: 'room-composer' })
   expect(await desktop.find({ type: 'Text', text: /^hi▏$/, in: 'room-composer' })).toBeDefined()
+  for (const key of ['space', '@', 'c', 'u']) await desktop.key({ key, in: 'room-composer' })
+  expect(await desktop.find({ type: 'Text', text: '@cursor', in: 'room-composer' })).toBeDefined()
+  expect(await desktop.find({ type: 'Text', text: '@main', in: 'room-composer' })).toBeUndefined()
+  await desktop.key({ key: 'tab', in: 'room-composer' })
+  expect(await desktop.find({ type: 'Text', text: /^hi @cursor ▏$/, in: 'room-composer' })).toBeDefined()
   await desktop.post({ type: 'to', agent: 'cursor' }, { in: 'room-composer' })
   await desktop.unmount()
 
@@ -140,7 +147,7 @@ test('the agent room: its own full-width message box on the desktop, the text fi
 })
 
 test('the message box edits like a text box: typing, paste, new lines, delete, send', async () => {
-  let state = { text: '', cursor: 0, focused: true }
+  let state: ComposerState = { text: '', cursor: 0, focused: true, pick: 0 }
   for (const key of ['h', 'i', 'space', 'there']) state = edit(state, { key }).state
   expect(state).toMatchObject({ text: 'hi there', cursor: 8 })
   state = edit(state, { key: 'return', shift: true }).state
@@ -148,12 +155,42 @@ test('the message box edits like a text box: typing, paste, new lines, delete, s
   state = edit(state, { key: 'backspace' }).state
   state = edit(state, { key: 'left' }).state
   expect(state).toMatchObject({ text: 'hi there\n', cursor: 8 })
-  expect(edit({ text: '', cursor: 0, focused: true }, { key: 'return' }).send).toBeUndefined()
-  const sent = edit({ text: ' hello ', cursor: 7, focused: true }, { key: 'return' })
+  expect(edit({ text: '', cursor: 0, focused: true, pick: 0 }, { key: 'return' }).send).toBeUndefined()
+  const sent = edit({ text: ' hello ', cursor: 7, focused: true, pick: 0 }, { key: 'return' })
   expect(sent.send).toBe('hello')
   expect(sent.state.text).toBe('')
   expect(edit(state, { key: 'escape' }).state.focused).toBe(false)
   expect(edit(state, { key: 'tab' }).state).toEqual(state)
+})
+
+const MENTIONS: ComposerMention[] = ['codex', 'cursor', 'claude', 'main'].map(id => ({ id, label: id, hint: id, color: 'gray' }))
+
+test('typing @ opens the mention list; arrows pick, Tab or Enter completes, Escape closes it', async () => {
+  expect(mentionQuery('ask @cu', 7)).toEqual({ start: 4, query: 'cu' })
+  expect(mentionQuery('email a@b', 9)).toBeUndefined()
+  let state: ComposerState = { text: '', cursor: 0, focused: true, pick: 0 }
+  state = edit(state, { key: '@' }, MENTIONS).state
+  expect(openMentions(state, MENTIONS).map(m => m.id)).toEqual(['codex', 'cursor', 'claude', 'main'])
+  state = edit(state, { key: 'c' }, MENTIONS).state
+  expect(openMentions(state, MENTIONS).map(m => m.id)).toEqual(['codex', 'cursor', 'claude'])
+  state = edit(state, { key: 'down' }, MENTIONS).state
+  const done = edit(state, { key: 'return' }, MENTIONS)
+  expect(done.send).toBeUndefined()
+  expect(done.state).toMatchObject({ text: '@cursor ', cursor: 8 })
+  expect(openMentions(done.state, MENTIONS)).toEqual([])
+  // Escape closes the list but keeps the text and the focus.
+  const closed = edit({ text: 'hi @', cursor: 4, focused: true, pick: 0 }, { key: 'escape' }, MENTIONS).state
+  expect(closed).toMatchObject({ text: 'hi @', focused: true })
+  expect(openMentions(closed, MENTIONS)).toEqual([])
+})
+
+test('the room header shows each agent with a status dot', async $ => {
+  const ui = await $.ui.mount({ plugin: 'second-opinion', surface: 'desktop', component: 'Pane', requestId: 'agent-room', props: PANE_PROPS })
+  for (const name of ['Codex', 'Cursor', 'Claude']) expect(await ui.find({ type: 'Text', text: name })).toBeDefined()
+  expect(isLive('ready')).toBe(true)
+  expect(isLive('busy')).toBe(true)
+  expect(isLive('idle')).toBe(false)
+  await ui.unmount()
 })
 
 test('answering whoever asked is not a handoff; bringing in someone else is', async () => {

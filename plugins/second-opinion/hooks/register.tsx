@@ -643,7 +643,13 @@ async function interrupt($: EngineInterface) {
 
 // ---------- drawing ----------
 
-const DOT: Record<AgentState, string> = { idle: '○', starting: '◌', ready: '●', busy: '◉', error: '✕' }
+// Green while an agent is up (connected or working), grey while it has not started, red when it failed.
+const STATUS_COLOR: Record<AgentState, string> = { idle: 'gray', starting: 'yellow', ready: 'green', busy: 'green', error: 'red' }
+const STATUS_WORD: Record<AgentState, string> = { idle: 'idle', starting: 'starting…', ready: 'ready', busy: 'working…', error: 'error' }
+
+export function isLive(status: AgentState): boolean {
+  return status === 'ready' || status === 'busy'
+}
 
 function contextLine(): string {
   return `context in: ${config.roomSeed}${config.roomSeed === 'recent' ? ` ${config.roomSeedTurns} turns` : ''} · back to main: ${config.claudeReturn}${config.claudeReturn === 'recent' ? ` ${config.claudeReturnMessages} msgs` : ''} · /config`
@@ -664,6 +670,17 @@ async function renderRoom($: EngineInterface, e: Parameters<EngineInterface['ui'
   // the left under their name, newest at the foot, and the message box beneath.
   return (
     <Box flexDirection="column" width="100%" minHeight={bodyRows > 0 ? bodyRows : undefined}>
+      <Box width="100%" gap={2} flexWrap="wrap" paddingBottom={1}>
+        {AGENTS.map(agent => (
+          <Box key={`status-${agent}`} gap={1}>
+            <Text color={STATUS_COLOR[state.status[agent]]}>●</Text>
+            <Text dimColor={!isLive(state.status[agent])}>{LABEL[agent]}</Text>
+            {state.status[agent] === 'busy' || state.status[agent] === 'starting' || state.status[agent] === 'error' ? (
+              <Text dimColor>{STATUS_WORD[state.status[agent]]}</Text>
+            ) : null}
+          </Box>
+        ))}
+      </Box>
       <Box flexDirection="column" flexGrow={1} justifyContent="flex-end">
         {state.messages.length === 0 && (
           <Box flexDirection="column" alignItems="center" paddingX={2} marginBottom={1}>
@@ -728,7 +745,11 @@ async function renderRoom($: EngineInterface, e: Parameters<EngineInterface['ui'
             props={{
               placeholder: `Message ${LABEL[to]}…  (@codex @cursor @claude @main)`,
               color: COLOR[to],
-              chips: AGENTS.map(agent => ({ id: agent, label: `${DOT[state.status[agent]]} ${LABEL[agent]}`, selected: agent === to })),
+              chips: AGENTS.map(agent => ({ id: agent, label: LABEL[agent], selected: agent === to })),
+              mentions: [
+                ...AGENTS.map(agent => ({ id: agent, label: LABEL[agent], hint: `${LABEL[agent]} · ${state.status[agent]}`, color: COLOR[agent] })),
+                { id: 'main', label: 'Main session', hint: 'your main Claude Code session', color: COLOR.main },
+              ],
             }}
           />
         ) : Input ? (
@@ -746,7 +767,7 @@ async function renderRoom($: EngineInterface, e: Parameters<EngineInterface['ui'
               {AGENTS.map(agent => (
                 <Button
                   key={`to-${agent}`}
-                  label={`${DOT[state.status[agent]]} ${LABEL[agent]}`}
+                  label={LABEL[agent]}
                   variant={agent === to ? 'primary' : 'secondary'}
                   dimColor={agent !== to}
                   onPress={() => setDefaultAgent($, agent)}
