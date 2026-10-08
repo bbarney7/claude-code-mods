@@ -6,7 +6,6 @@ import {
   handoffTargets,
   historyFor,
   isBareAck,
-  routesToRoom,
   normalizeAsk,
   parseDelegate,
   parseMentions,
@@ -18,6 +17,7 @@ import {
   targetsOf,
 } from '../hooks/register'
 import type { RoomMessage } from '../types'
+import { edit } from '../hooks/composer'
 
 const PANE_PROPS = {
   title: 'Pane',
@@ -117,40 +117,43 @@ test('the review pane starts empty with a hint', async $ => {
   }
 })
 
-test('the agent room is a chat transcript with a way to start typing into it', async $ => {
-  for (const surface of ['terminal', 'desktop', 'mobile'] as const) {
-    const ui = await $.ui.mount({ plugin: 'second-opinion', surface, component: 'Pane', requestId: 'agent-room', props: PANE_PROPS })
-    expect(await ui.find({ type: 'Text', text: /@main reaches your session/ })).toBeDefined()
-    expect(await ui.find({ key: 'compose' })).toBeDefined()
-    await ui.unmount()
-  }
+test('the agent room: its own full-width message box on the desktop, the text field elsewhere, /ask on mobile', async $ => {
+  const desktop = await $.ui.mount({ plugin: 'second-opinion', surface: 'desktop', component: 'Pane', requestId: 'agent-room', props: PANE_PROPS })
+  expect(await desktop.find({ type: 'Text', text: /@main reaches your session/ })).toBeDefined()
+  expect(await desktop.find({ key: 'room-composer' })).toBeDefined()
+  // Click, type, and the box shows the text with its caret; picking a chip changes who answers.
+  await desktop.pointer({ type: 'down', x: 2, y: 1, button: 'left' })
+  for (const key of ['h', 'i']) await desktop.key({ key, in: 'room-composer' })
+  expect(await desktop.find({ type: 'Text', text: /^hi▏$/, in: 'room-composer' })).toBeDefined()
+  await desktop.post({ type: 'to', agent: 'cursor' }, { in: 'room-composer' })
+  await desktop.unmount()
+
+  const terminal = await $.ui.mount({ plugin: 'second-opinion', surface: 'terminal', component: 'Pane', requestId: 'agent-room', props: PANE_PROPS })
+  expect((await terminal.find({ key: 'room-0' }))?.props).toMatchObject({ placeholder: 'Message Cursor…' })
+  await terminal.press({ key: 'to-codex' })
+  expect((await terminal.find({ key: 'room-0' }))?.props).toMatchObject({ placeholder: 'Message Codex…' })
+  await terminal.unmount()
+
+  const phone = await $.ui.mount({ plugin: 'second-opinion', surface: 'mobile', component: 'Pane', requestId: 'agent-room', props: PANE_PROPS })
+  expect(await phone.find({ type: 'Text', text: /Send with \/ask @codex/ })).toBeDefined()
+  await phone.unmount()
 })
 
-test('/room hands the prompt box to the room, and the band above it picks who answers', async ($, on) => {
-  on('ui.open', () => ({ value: { isOpen: true } }) as never)
-  on('ui.invalidate', () => ({ value: undefined }) as never)
-  // The engine's own band beneath the plugin's: empty here.
-  on('ui.render', { component: 'AbovePrompt' }, ($, e) => $.ui.resolve(e).Box({ key: 'engine-band' }))
-  await $.command.run({ command: 'room', args: '' } as never)
-  const band = await $.ui.mount({ plugin: 'second-opinion', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 80 } as never })
-  expect(await band.find({ key: 'to-codex' })).toBeDefined()
-  await band.press({ key: 'to-cursor' })
-  const pane = await $.ui.mount({ plugin: 'second-opinion', surface: 'terminal', component: 'Pane', requestId: 'agent-room', props: PANE_PROPS })
-  expect(await pane.find({ type: 'Text', text: /to @cursor/ })).toBeDefined()
-  await band.press({ key: 'to-main' })
-  expect(await band.find({ key: 'to-codex' })).toBeUndefined()
-  await pane.unmount()
-  await band.unmount()
-})
-
-test('only the person\'s own prompts go to the room, and only while it has the prompt box', async () => {
-  expect(routesToRoom(true, 'what is 2+2', { kind: 'composer' })).toBe(true)
-  expect(routesToRoom(true, 'what is 2+2', { kind: 'sdk' })).toBe(true)
-  expect(routesToRoom(true, 'what is 2+2', undefined)).toBe(true)
-  expect(routesToRoom(false, 'what is 2+2', { kind: 'composer' })).toBe(false)
-  expect(routesToRoom(true, '/room off', { kind: 'composer' })).toBe(false)
-  expect(routesToRoom(true, 'room summary', { kind: 'plugin' })).toBe(false)
-  expect(routesToRoom(true, '   ', { kind: 'composer' })).toBe(false)
+test('the message box edits like a text box: typing, paste, new lines, delete, send', async () => {
+  let state = { text: '', cursor: 0, focused: true }
+  for (const key of ['h', 'i', 'space', 'there']) state = edit(state, { key }).state
+  expect(state).toMatchObject({ text: 'hi there', cursor: 8 })
+  state = edit(state, { key: 'return', shift: true }).state
+  state = edit(state, { key: 'x' }).state
+  state = edit(state, { key: 'backspace' }).state
+  state = edit(state, { key: 'left' }).state
+  expect(state).toMatchObject({ text: 'hi there\n', cursor: 8 })
+  expect(edit({ text: '', cursor: 0, focused: true }, { key: 'return' }).send).toBeUndefined()
+  const sent = edit({ text: ' hello ', cursor: 7, focused: true }, { key: 'return' })
+  expect(sent.send).toBe('hello')
+  expect(sent.state.text).toBe('')
+  expect(edit(state, { key: 'escape' }).state.focused).toBe(false)
+  expect(edit(state, { key: 'tab' }).state).toEqual(state)
 })
 
 test('answering whoever asked is not a handoff; bringing in someone else is', async () => {

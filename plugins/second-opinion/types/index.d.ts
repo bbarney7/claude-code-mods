@@ -37,8 +37,6 @@ export type Room = {
   detail: string
   permissions: PermissionCard[]
   defaultAgent: Agent
-  // While true, what the person types in Claude Code's own prompt box goes to the room.
-  composing: boolean
 }
 
 declare module 'claude-code' {

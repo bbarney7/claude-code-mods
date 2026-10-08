@@ -19,7 +19,6 @@ const room = atom({ plugin: 'second-opinion', key: 'room' } as const, {
   detail: '',
   permissions: [],
   defaultAgent: 'codex',
-  composing: false,
 })
 
 const EXTERNAL: External[] = ['codex', 'cursor']
@@ -255,13 +254,6 @@ export function handoffTargets(reply: RoomMessage, askedBy: Speaker | undefined)
 }
 
 // A handed-off reply that only thanks or acknowledges ends the chain instead of looping.
-// While the room has the prompt box, the person's own prompts go to the room; slash commands,
-// and prompts a plugin or a background task submits, still reach the main session.
-export function routesToRoom(composing: boolean, text: string, origin: { kind: string } | undefined): boolean {
-  if (!composing || !text.trim() || text.trimStart().startsWith('/')) return false
-  return !origin || ['composer', 'bridge', 'sdk'].includes(origin.kind)
-}
-
 export function isBareAck(text: string): boolean {
   const words = text.replace(/@\w+/g, '').trim()
   return words.length < 40 && /^(thanks|thank you|ok|okay|got it|sounds good|agreed|will do|👍)/i.test(words)
@@ -638,11 +630,6 @@ async function answerPermission($: EngineInterface, id: string, optionId: string
   await bridgePost($, '/permission', { id, optionId })
 }
 
-async function setComposing($: EngineInterface, composing: boolean) {
-  await update($, room, r => ({ ...r, composing }))
-  $.ui.invalidate('ui.render')
-}
-
 async function setDefaultAgent($: EngineInterface, agent: Agent) {
   await update($, room, r => ({ ...r, defaultAgent: agent }))
 }
@@ -663,12 +650,18 @@ function contextLine(): string {
 }
 
 async function renderRoom($: EngineInterface, e: Parameters<EngineInterface['ui']['resolve']>[0], bodyRows: number) {
-  const { Box, Text, Markdown, Button } = $.ui.resolve(e)
+  const elements = $.ui.resolve(e)
+  const { Box, Text, Markdown, Button } = elements
+  // The desktop draws the room's own full-width message box (composer.tsx); elsewhere the surface's
+  // text field, and on mobile, which has none, /ask.
+  const Client = 'Client' in elements ? elements.Client : undefined
+  const Input = e.surface !== 'mobile' && 'Input' in elements ? elements.Input : undefined
   const state = await read($, room)
   const isBusy = AGENTS.some(agent => state.status[agent] === 'busy')
+  const to = state.defaultAgent
 
   // A chat transcript: the person's messages as bubbles on the right, the agents' replies on
-  // the left under their name, newest at the foot. Typing happens in Claude Code's own prompt box.
+  // the left under their name, newest at the foot, and the message box beneath.
   return (
     <Box flexDirection="column" width="100%" minHeight={bodyRows > 0 ? bodyRows : undefined}>
       <Box flexDirection="column" flexGrow={1} justifyContent="flex-end">
@@ -726,43 +719,53 @@ async function renderRoom($: EngineInterface, e: Parameters<EngineInterface['ui'
         ))}
       </Box>
 
-      <Box width="100%" marginTop={1} justifyContent="space-between" alignItems="center" flexWrap="wrap" gap={1}>
-        {state.composing ? (
-          <Text dimColor>{`Type in the prompt box below · to @${state.defaultAgent}`}</Text>
+      <Box flexDirection="column" width="100%" marginTop={1}>
+        {Client && e.surface === 'desktop' ? (
+          <Client
+            key="room-composer"
+            module="./composer.tsx"
+            width="100%"
+            props={{
+              placeholder: `Message ${LABEL[to]}…  (@codex @cursor @claude @main)`,
+              color: COLOR[to],
+              chips: AGENTS.map(agent => ({ id: agent, label: `${DOT[state.status[agent]]} ${LABEL[agent]}`, selected: agent === to })),
+            }}
+          />
+        ) : Input ? (
+          <Box flexDirection="column" width="100%" borderStyle="round" borderColor={COLOR[to]} paddingX={1}>
+            <Input
+              key={`room-${state.messages.length}`}
+              placeholder={`Message ${LABEL[to]}…`}
+              submitLabel="send"
+              autoFocus
+              onSubmit={(value: string) => {
+                if (value.trim()) void post($, 'you', value.trim())
+              }}
+            />
+            <Box gap={1}>
+              {AGENTS.map(agent => (
+                <Button
+                  key={`to-${agent}`}
+                  label={`${DOT[state.status[agent]]} ${LABEL[agent]}`}
+                  variant={agent === to ? 'primary' : 'secondary'}
+                  dimColor={agent !== to}
+                  onPress={() => setDefaultAgent($, agent)}
+                />
+              ))}
+            </Box>
+          </Box>
         ) : (
-          <Button key="compose" label="Chat in the room" variant="primary" onPress={() => setComposing($, true)} />
+          <Text dimColor>{`Send with /ask @${to} <message>`}</Text>
         )}
+      </Box>
+      <Box width="100%" justifyContent="space-between" alignItems="center" flexWrap="wrap" gap={1}>
+        <Text dimColor>{contextLine()}</Text>
         <Box gap={1} alignItems="center">
           {isBusy && <Button key="interrupt" label="Interrupt" variant="secondary" onPress={() => interrupt($)} />}
           {state.messages.length > 0 && <Button key="share" label="Send to main" variant="secondary" dimColor onPress={() => sendRoomToMain($)} />}
           {state.messages.length > 0 && <Button key="new" label="New chat" variant="secondary" dimColor onPress={() => resetRoom($)} />}
         </Box>
       </Box>
-      <Text dimColor>{contextLine()}</Text>
-    </Box>
-  )
-}
-
-// Above Claude Code's prompt box while it types into the room: who will answer, and the way back.
-async function renderRoomBand($: EngineInterface, e: Parameters<EngineInterface['ui']['resolve']>[0]) {
-  const { Box, Text, Button } = $.ui.resolve(e)
-  const state = await read($, room)
-  return (
-    <Box gap={1} alignItems="center" flexWrap="wrap">
-      <Text bold color={COLOR[state.defaultAgent]}>
-        Agent room
-      </Text>
-      <Text dimColor>to</Text>
-      {AGENTS.map(agent => (
-        <Button
-          key={`to-${agent}`}
-          label={`${DOT[state.status[agent]]} ${LABEL[agent]}`}
-          variant={agent === state.defaultAgent ? 'primary' : 'secondary'}
-          dimColor={agent !== state.defaultAgent}
-          onPress={() => setDefaultAgent($, agent)}
-        />
-      ))}
-      <Button key="to-main" label="Back to main" variant="secondary" dimColor onPress={() => setComposing($, false)} />
     </Box>
   )
 }
@@ -856,35 +859,18 @@ export const register: Register = (on, options) => {
   })
 
   // `/second-opinion:room` is the same command, declared in commands/ so a host lists it from the start.
-  on('command.run', { command: ['room', 'second-opinion:room'] }, async ($, e) => {
-    if (e.args.trim() === 'off') {
-      await setComposing($, false)
-      return { text: 'The prompt box talks to the main session again.' }
-    }
-    await $.ui.open({ id: ROOM_PANE, title: 'Agent room' })
-    await setComposing($, true)
-    return { text: 'Agent room open: the prompt box now talks to the room (/room off or "Back to main" to stop).' }
+  on('command.run', { command: ['room', 'second-opinion:room'] }, async $ => {
+    await $.ui.open({ id: ROOM_PANE, title: 'Agent room', focus: true })
+    return { text: 'Agent room opened.' }
   })
 
-  on('prompt.submit', async ($, e, next) => {
-    const state = await read($, room)
-    if (!routesToRoom(state.composing, e.text, e.origin)) return next(e)
-    await $.ui.open({ id: ROOM_PANE, title: 'Agent room' })
-    void post($, 'you', e.text.trim())
-    return { drop: `→ agent room (@${parseMentions(e.text)[0] ?? state.defaultAgent})` }
-  }).catch(($, e, next) => next(e))
-
-  on('ui.close', { id: 'agent-room' }, async ($, e, next) => {
-    await setComposing($, false)
-    return next(e)
-  })
-
-  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const below = await next(e)
-    if (e.props.hasSurvey || !(await read($, room)).composing) return below
-    const { Box } = $.ui.resolve(e)
-    const band = await renderRoomBand($, e)
-    return below ? <Box flexDirection="column">{band}{below}</Box> : band
+  // The desktop message box (composer.tsx) posts what was sent and which agent was picked.
+  on('ui.message', async ($, e, next) => {
+    if (e.element !== 'room-composer') return next(e)
+    const data = (e.data ?? {}) as { type?: string; text?: string; agent?: string }
+    if (data.type === 'send' && data.text?.trim()) void post($, 'you', data.text.trim())
+    if (data.type === 'to' && AGENTS.includes(data.agent as Agent)) await setDefaultAgent($, data.agent as Agent)
+    return {}
   })
 
   on('command.run', { command: 'ask' }, async ($, e) => {

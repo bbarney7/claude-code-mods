@@ -9,7 +9,7 @@
     {
       "name": "second-opinion",
       "description": "Codex, Cursor and a second Claude inside Claude Code: an agent room (one chat, @mentions, handoffs) plus one-shot reviews and delegation",
-      "version": "0.4.4",
+      "version": "0.4.5",
       "author": {
         "name": "Brennen Barney"
       },
