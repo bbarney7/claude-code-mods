@@ -121,7 +121,7 @@ test('the review pane starts empty with a hint', async $ => {
 
 test('the agent room: its own full-width message box on the desktop, the text field elsewhere, /ask on mobile', async $ => {
   const desktop = await $.ui.mount({ plugin: 'second-opinion', surface: 'desktop', component: 'Pane', requestId: 'agent-room', props: PANE_PROPS })
-  expect(await desktop.find({ type: 'Text', text: /@main reaches your session/ })).toBeDefined()
+  expect(await desktop.find({ type: 'Text', text: 'Type @ to pick who answers' })).toBeDefined()
   expect(await desktop.find({ key: 'room-composer' })).toBeDefined()
   // Click, type, and the box shows the text with its caret; picking a chip changes who answers.
   await desktop.pointer({ type: 'down', x: 2, y: 1, button: 'left' })
@@ -258,12 +258,6 @@ test('the room transcript for Claude skips routing rows and keeps the newest', a
   ]
   expect(roomTranscript(messages, 10, 10_000)).toBe('You: first\n\nCodex: second\n\nCursor: third')
   expect(roomTranscript(messages, 2, 10_000)).toBe('Codex: second\n\nCursor: third')
-})
-
-test('the room header shows the context settings from /config', { options: { roomSeed: 'summary', claudeReturn: 'recent', claudeReturnMessages: 5 } }, async $ => {
-  const ui = await $.ui.mount({ plugin: 'second-opinion', surface: 'terminal', component: 'Pane', requestId: 'agent-room', props: PANE_PROPS })
-  expect(await ui.find({ type: 'Text', text: /context in: summary · back to main: recent 5 msgs/ })).toBeDefined()
-  await ui.unmount()
 })
 
 test('the first prompt tells a room agent who @main and @claude are', async () => {

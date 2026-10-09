@@ -651,10 +651,6 @@ export function isLive(status: AgentState): boolean {
   return status === 'ready' || status === 'busy'
 }
 
-function contextLine(): string {
-  return `context in: ${config.roomSeed}${config.roomSeed === 'recent' ? ` ${config.roomSeedTurns} turns` : ''} · back to main: ${config.claudeReturn}${config.claudeReturn === 'recent' ? ` ${config.claudeReturnMessages} msgs` : ''} · /config`
-}
-
 async function renderRoom($: EngineInterface, e: Parameters<EngineInterface['ui']['resolve']>[0], bodyRows: number) {
   const elements = $.ui.resolve(e)
   const { Box, Text, Markdown, Button } = elements
@@ -685,9 +681,7 @@ async function renderRoom($: EngineInterface, e: Parameters<EngineInterface['ui'
         {state.messages.length === 0 && (
           <Box flexDirection="column" alignItems="center" paddingX={2} marginBottom={1}>
             <Text bold>Agent room</Text>
-            <Text dimColor>
-              {'Codex, Cursor and a second Claude in one chat. @mention picks who answers, @main reaches your session, and agents can hand off to each other.'}
-            </Text>
+            <Text dimColor>Type @ to pick who answers</Text>
           </Box>
         )}
         {state.messages.slice(-30).map(m =>
@@ -743,7 +737,7 @@ async function renderRoom($: EngineInterface, e: Parameters<EngineInterface['ui'
             module="./composer.tsx"
             width="100%"
             props={{
-              placeholder: `Message ${LABEL[to]}…  (@codex @cursor @claude @main)`,
+              placeholder: `Message ${LABEL[to]}…`,
               color: COLOR[to],
               chips: AGENTS.map(agent => ({ id: agent, label: LABEL[agent], selected: agent === to })),
               mentions: [
@@ -779,14 +773,13 @@ async function renderRoom($: EngineInterface, e: Parameters<EngineInterface['ui'
           <Text dimColor>{`Send with /ask @${to} <message>`}</Text>
         )}
       </Box>
-      <Box width="100%" justifyContent="space-between" alignItems="center" flexWrap="wrap" gap={1}>
-        <Text dimColor>{contextLine()}</Text>
-        <Box gap={1} alignItems="center">
+      {(isBusy || state.messages.length > 0) && (
+        <Box width="100%" justifyContent="flex-end" gap={1}>
           {isBusy && <Button key="interrupt" label="Interrupt" variant="secondary" onPress={() => interrupt($)} />}
           {state.messages.length > 0 && <Button key="share" label="Send to main" variant="secondary" dimColor onPress={() => sendRoomToMain($)} />}
           {state.messages.length > 0 && <Button key="new" label="New chat" variant="secondary" dimColor onPress={() => resetRoom($)} />}
         </Box>
-      </Box>
+      )}
     </Box>
   )
 }

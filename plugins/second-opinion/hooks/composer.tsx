@@ -124,7 +124,6 @@ const Composer: ClientModule<ComposerProps, ComposerState> = (props, surface) =>
           <Button key="send" label="Send ↵" variant="primary" onPress={send} />
         </Box>
       </Box>
-      {!state.focused && !state.text ? <Text dimColor>{'  click to type · @ to mention · Enter sends · Shift+Enter for a new line'}</Text> : null}
     </Box>
   )
 }
