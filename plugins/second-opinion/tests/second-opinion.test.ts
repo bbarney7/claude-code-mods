@@ -223,18 +223,20 @@ test('a fresh agent gets the tail of the Claude session, without tool noise or r
 })
 
 test('settings fall back to defaults when missing or out of range', async () => {
-  expect(readConfig({})).toEqual({ roomSeed: 'recent', roomSeedTurns: 10, claudeReturn: 'message', claudeReturnMessages: 8 })
+  expect(readConfig({})).toEqual({ roomSeed: 'recent', roomSeedTurns: 10, claudeReturn: 'message', claudeReturnMessages: 8, roomEdits: 'allow' })
   expect(readConfig({ roomSeed: 'summary', roomSeedTurns: 25, claudeReturn: 'full', claudeReturnMessages: 3 })).toEqual({
     roomSeed: 'summary',
     roomSeedTurns: 25,
     claudeReturn: 'full',
     claudeReturnMessages: 3,
+    roomEdits: 'allow',
   })
   expect(readConfig({ roomSeed: 'everything', roomSeedTurns: -4, claudeReturnMessages: 9999 })).toEqual({
     roomSeed: 'recent',
     roomSeedTurns: 1,
     claudeReturn: 'message',
     claudeReturnMessages: 200,
+    roomEdits: 'allow',
   })
 })
 
@@ -258,6 +260,14 @@ test('the room transcript for Claude skips routing rows and keeps the newest', a
   ]
   expect(roomTranscript(messages, 10, 10_000)).toBe('You: first\n\nCodex: second\n\nCursor: third')
   expect(roomTranscript(messages, 2, 10_000)).toBe('Codex: second\n\nCursor: third')
+})
+
+test('the room prompt says whether the agent may edit', async () => {
+  const trigger: RoomMessage = { id: 't', from: 'you', text: 'fix it' }
+  expect(framePrompt('codex', true, '', trigger, 0, '/repo')).toContain('edit files and run commands there')
+  expect(framePrompt('codex', true, '', trigger, 0, '/repo', '', 'ask')).toContain('propose a change before making it')
+  expect(readConfig({}).roomEdits).toBe('allow')
+  expect(readConfig({ roomEdits: 'ask' }).roomEdits).toBe('ask')
 })
 
 test('the first prompt tells a room agent who @main and @claude are', async () => {

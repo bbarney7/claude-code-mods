@@ -24,8 +24,10 @@ const args = Object.fromEntries(
 )
 const SOCKET = args.socket
 const CWD = args.cwd || process.cwd()
+// allow: agents edit the repository on their own; ask: they ask first (Cursor's ask mode only reads).
+const EDITS = args.edits === 'ask' ? 'ask' : 'allow'
 if (!SOCKET) {
-  console.error('usage: acp-bridge.mjs --socket <path> [--cwd <dir>]')
+  console.error('usage: acp-bridge.mjs --socket <path> [--cwd <dir>] [--edits allow|ask]')
   process.exit(2)
 }
 
@@ -36,19 +38,19 @@ if (!SOCKET) {
 const HARNESSES = {
   codex: {
     argv: ['codex-acp'],
-    mode: 'read-only',
+    mode: EDITS === 'allow' ? 'workspace-write' : 'read-only',
     config: { reasoning_effort: 'medium' },
-    install: 'npm i -g @agentclientprotocol/codex-acp, then sign in with `codex login`',
+    install: 'npm i -g @agentclientprotocol/codex-acp (2.x for the gpt-6 models), then sign in with `codex login`',
   },
   cursor: {
     argv: ['cursor-agent', 'acp'],
-    mode: 'ask',
+    mode: EDITS === 'allow' ? 'agent' : 'ask',
     config: {},
     install: 'curl https://cursor.com/install -fsS | bash, then sign in with `cursor-agent login`',
   },
   claude: {
     argv: ['claude-agent-acp'],
-    mode: 'default',
+    mode: EDITS === 'allow' ? 'acceptEdits' : 'default',
     config: { effort: 'medium' },
     env: { SECOND_OPINION_IN_ROOM: '1' },
     install: 'npm i -g @agentclientprotocol/claude-agent-acp',

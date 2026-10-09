@@ -1,6 +1,6 @@
 {
   "name": "second-opinion",
-  "version": "0.4.7",
+  "version": "0.5.0",
   "description": "Codex, Cursor and a second Claude inside Claude Code: an agent room (one chat, @mentions, handoffs) plus one-shot reviews and delegation",
   "author": {
     "name": "Brennen Barney"
@@ -53,6 +53,16 @@
       "title": "Room: messages to send back for 'recent'",
       "description": "How many of the latest room messages go with a message to Claude.",
       "default": 8
+    },
+    "roomEdits": {
+      "type": "string",
+      "title": "Room: can agents edit files",
+      "description": "allow: Codex, Cursor and the room's Claude edit files and run commands in the repository on their own (anything outside it still asks you in the room). ask: each asks you in the room before an edit; Cursor, which cannot ask, only reads.",
+      "default": "allow",
+      "options": [
+        "allow",
+        "ask"
+      ]
     }
   }
 }

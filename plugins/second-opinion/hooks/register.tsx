@@ -31,8 +31,10 @@ const COLOR: Record<Speaker, string> = { codex: 'green', cursor: 'magenta', clau
 
 export type SeedMode = 'none' | 'recent' | 'summary' | 'full'
 export type ReturnMode = 'message' | 'recent' | 'summary' | 'full'
-export type ContextConfig = { roomSeed: SeedMode; roomSeedTurns: number; claudeReturn: ReturnMode; claudeReturnMessages: number }
-export const DEFAULT_CONFIG: ContextConfig = { roomSeed: 'recent', roomSeedTurns: 10, claudeReturn: 'message', claudeReturnMessages: 8 }
+// allow: room agents edit the repository on their own; ask: each asks first (Cursor, which cannot ask, only reads).
+export type RoomEdits = 'allow' | 'ask'
+export type ContextConfig = { roomSeed: SeedMode; roomSeedTurns: number; claudeReturn: ReturnMode; claudeReturnMessages: number; roomEdits: RoomEdits }
+export const DEFAULT_CONFIG: ContextConfig = { roomSeed: 'recent', roomSeedTurns: 10, claudeReturn: 'message', claudeReturnMessages: 8, roomEdits: 'allow' }
 
 const SEED_MODES: readonly SeedMode[] = ['none', 'recent', 'summary', 'full']
 const RETURN_MODES: readonly ReturnMode[] = ['message', 'recent', 'summary', 'full']
@@ -50,6 +52,7 @@ export function readConfig(options: Readonly<Record<string, unknown>>): ContextC
     roomSeedTurns: count(options.roomSeedTurns, DEFAULT_CONFIG.roomSeedTurns),
     claudeReturn: RETURN_MODES.includes(back) ? back : DEFAULT_CONFIG.claudeReturn,
     claudeReturnMessages: count(options.claudeReturnMessages, DEFAULT_CONFIG.claudeReturnMessages),
+    roomEdits: options.roomEdits === 'ask' ? 'ask' : DEFAULT_CONFIG.roomEdits,
   }
 }
 
@@ -227,6 +230,7 @@ export function framePrompt(
   hop: number,
   cwd: string,
   sessionContext = '',
+  edits: RoomEdits = 'allow',
 ): string {
   const system = isFirst
     ? [
@@ -234,7 +238,9 @@ export function framePrompt(
         `You are @${agent} (${LABEL[agent]}) in a group chat that lives inside Claude Code.`,
         'Participants: @you is the human developer; @main is the main Claude Code session that opened this room;',
         '@claude is a separate Claude agent in the room; @codex is OpenAI Codex; @cursor is the Cursor agent. You are one of them.',
-        `You can read the repository at ${cwd}. Edits and commands may need the human's approval.`,
+        edits === 'allow'
+          ? `You work in the repository at ${cwd}: edit files and run commands there when that is what's asked, and say briefly what you changed. Anything outside it may need the human's approval.`
+          : `You can read the repository at ${cwd}. Edits and commands need the human's approval, so propose a change before making it.`,
         'Your reply goes back to whoever addressed you on its own; do not @mention them to answer.',
         'To bring in a different participant, @mention them in your reply and they get a turn.',
         'Only @mention someone when you want them to act. Keep replies short and concrete.',
@@ -366,7 +372,7 @@ async function ensureBridge($: EngineInterface): Promise<string | undefined> {
 
 // The bridge's stdout is its event stream; this loop lives as long as the bridge does.
 async function readBridge($: EngineInterface, socket: string) {
-  const argv = ['node', `${$.plugin.root}/bridge/acp-bridge.mjs`, '--socket', socket, '--cwd', cwd]
+  const argv = ['node', `${$.plugin.root}/bridge/acp-bridge.mjs`, '--socket', socket, '--cwd', cwd, '--edits', config.roomEdits]
   let pending = ''
   let stderr = ''
   try {
@@ -528,7 +534,7 @@ async function startTurn($: EngineInterface, agent: Agent, trigger: RoomMessage,
     await ensureBridge($)
     const isFresh = !primed.has(agent)
     const sessionContext = isFresh ? await seedFor($) : ''
-    const text = framePrompt(agent, isFresh, history, trigger, hop, cwd, sessionContext)
+    const text = framePrompt(agent, isFresh, history, trigger, hop, cwd, sessionContext, config.roomEdits)
     primed.add(agent)
     await bridgePost($, '/prompt', { agent, turn, text })
   } catch (error) {
