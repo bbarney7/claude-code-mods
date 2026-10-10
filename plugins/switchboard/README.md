@@ -14,6 +14,7 @@ Claude Code can already message other sessions on the same machine: its `SendMes
 |---|---|
 | `/switchboard` | A pane listing every running session: busy or idle, and for sessions that also run Switchboard, their repository, branch, Syntaur ticket and the file they last edited. Each one has a **Message** button. |
 | `/dm <session> <message>` | Message a session yourself. Its replies show up in the pane. |
+| **Codex sessions** | The pane also lists your recent Codex sessions (from Codex's local app-server daemon). **Message** fills `/dm codex:<id> …`, which sends through `codex queue`: an open Codex session answers right away, a closed one gets it the next time it's opened. Needs Codex 0.162 or later. |
 | `/broadcast <message>` | Message every session that runs Switchboard ("main is frozen for 10 minutes"). |
 | `/handoff <session>` | Claude writes a handoff of this session (goal, done, in progress, decisions, open problems, next step) and sends it to another session. |
 | **Inbox** | Messages from other sessions can wait in the pane until you choose **Pass to Claude**, **Reply** or **Dismiss**. A held message is never shown to Claude. |
@@ -38,6 +39,8 @@ A message from another session arrives in Claude's conversation much like a prom
 - **Messages** go through Claude Code's cross-session messaging (`$.session.send`), the same channel `SendMessage` uses. Incoming ones are recognised by their `<cross-session-message from-name="…">` envelope.
 
 ## Limits
+
+- **Codex: one way, and no live status.** Messages go to Codex, but Codex's replies stay in that Codex session. A Codex terminal session doesn't tell the daemon it's open, so the pane shows when each one was last active rather than open or closed.
 
 - **Edits only through Claude's editing tools count.** Edits made through Edit, Write, MultiEdit and NotebookEdit are tracked. Edits made by shell commands (`sed -i`, scripts) are not.
 - **Branch and ticket only appear for sessions running Switchboard.** Other sessions show only what `ListAgents` reports.

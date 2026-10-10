@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderInput } from 'claude-code'
 
-import type { Note, PeerRow, Presence, Touch } from '../types'
+import type { CodexThread, Note, PeerRow, Presence, Touch } from '../types'
 
 const PANE = 'switchboard'
 const NOTES_CAP = 60
@@ -12,6 +12,7 @@ const meAtom = atom({ plugin: 'switchboard', key: 'me' } as const, '')
 const peersAtom = atom({ plugin: 'switchboard', key: 'peers' } as const, [])
 const presenceAtom = atom({ plugin: 'switchboard', key: 'presence' } as const, [])
 const notesAtom = atom({ plugin: 'switchboard', key: 'notes' } as const, [])
+const codexAtom = atom({ plugin: 'switchboard', key: 'codex' } as const, [])
 
 // ---------- settings ----------
 
@@ -74,6 +75,24 @@ export function parseDm(args: string): { peer: string; text: string } | { error:
   return { peer: peer.replace(/^@/, ''), text }
 }
 
+// Codex sessions go by `codex:` and the end of their id in /dm, since their names have spaces.
+export function codexHandle(id: string): string {
+  return `codex:${id.slice(-8)}`
+}
+
+export function findCodex(peer: string, threads: readonly CodexThread[]): CodexThread | undefined {
+  if (!peer.startsWith('codex:')) return undefined
+  const tail = peer.slice('codex:'.length)
+  return tail ? threads.find(t => t.id.endsWith(tail)) : undefined
+}
+
+// Working ones first, then the most recently active. (A Codex terminal session doesn't report
+// itself to the daemon as open, so there is no reliable open/closed to show.)
+export function codexToShow(threads: readonly CodexThread[], max = 5): CodexThread[] {
+  const open = (t: CodexThread) => t.status !== 'notLoaded'
+  return [...threads].sort((a, b) => Number(open(b)) - Number(open(a)) || b.updatedAt - a.updatedAt).slice(0, max)
+}
+
 export function ago(ms: number): string {
   const s = Math.max(0, Math.round(ms / 1000))
   if (s < 60) return `${s}s ago`
@@ -110,6 +129,26 @@ async function refreshPeers($: EngineInterface) {
     $.ui.log(`switchboard: could not list sessions: ${String(error)}`, { to: 'debug' })
   }
   await readPresence($)
+}
+
+let codexError: string | undefined
+
+// Codex's sessions come from its local daemon through a small helper; no Codex, no section.
+async function refreshCodex($: EngineInterface) {
+  try {
+    const run = await $.process.run(['node', `${$.plugin.root}/bin/codex-sessions.mjs`, '15'])
+    const out = JSON.parse(run.stdout.trim() || '{}') as { threads?: CodexThread[]; error?: string }
+    codexError = out.error
+    await update($, codexAtom, () => out.threads ?? [])
+  } catch (error) {
+    codexError = String(error)
+    await update($, codexAtom, () => [])
+  }
+}
+
+async function refreshAll($: EngineInterface) {
+  await refreshPeers($)
+  await refreshCodex($)
 }
 
 async function readPresence($: EngineInterface) {
@@ -168,6 +207,18 @@ async function note($: EngineInterface, entry: Omit<Note, 'id' | 'at'>): Promise
 }
 
 async function sendTo($: EngineInterface, peer: string, text: string): Promise<string | undefined> {
+  if (peer.startsWith('codex:')) {
+    let thread = findCodex(peer, await read($, codexAtom))
+    if (!thread) {
+      await refreshCodex($)
+      thread = findCodex(peer, await read($, codexAtom))
+    }
+    if (!thread) return `no Codex session ${peer}${codexError ? ` (${codexError})` : ''}`
+    const run = await $.process.run(['codex', 'queue', '--thread', thread.id, '--message', text])
+    if (run.exitCode !== 0) return `codex queue failed: ${(run.stderr || run.stdout).trim().slice(0, 200)}`
+    await note($, { direction: 'out', peer: `Codex · ${thread.name}`, text })
+    return undefined
+  }
   try {
     const sent = (await $.session.send({ to: peer, text })) as { isDelivered?: boolean }
     await note($, { direction: 'out', peer, text })
@@ -236,6 +287,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
   const inbox = notes.filter(n => n.held)
   const recent = notes.filter(n => !n.held).slice(-5)
   const { here, elsewhere, offline } = groupPeers(peers, presence, root)
+  const codex = codexToShow(await read($, codexAtom))
   const shown = showAll ? elsewhere : elsewhere.slice(0, SHOW_ELSEWHERE)
   const repoName = (path: string) => path.split('/').pop() ?? path
 
@@ -306,6 +358,26 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         <Button key="more" label={showAll ? 'Show fewer' : `Show ${elsewhere.length - SHOW_ELSEWHERE} more`} plain dimColor onPress={() => toggleShowAll($)} />
       )}
 
+      {codex.length > 0 && (
+        <Box marginTop={1}>
+          <Text bold>{`Codex · ${codex.length}`}</Text>
+        </Box>
+      )}
+      {codex.map(t => (
+        <Box key={`codex-${t.id}`} width="100%" justifyContent="space-between" alignItems="center" marginTop={1}>
+          <Box flexDirection="column" flexShrink={1}>
+            <Box gap={1}>
+              <Text color={t.status === 'active' ? 'green' : 'gray'}>●</Text>
+              <Text bold wrap="truncate-end">{t.name}</Text>
+            </Box>
+            <Text dimColor wrap="truncate-end">
+              {`  ${[repoName(t.cwd), t.status === 'active' ? 'working…' : `active ${ago(now - t.updatedAt)}`].filter(Boolean).join(' · ')}`}
+            </Text>
+          </Box>
+          <Button key={`dm-${t.id}`} label="Message" variant="secondary" dimColor onPress={() => void $.prompt.fill({ text: `/dm ${codexHandle(t.id)} ` })} />
+        </Box>
+      ))}
+
       {recent.length > 0 && (
         <Box marginTop={1}>
           <Text bold>Messages</Text>
@@ -321,7 +393,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
 
       <Box width="100%" justifyContent="space-between" alignItems="center" marginTop={1}>
         <Text dimColor>{`${offline ? `${offline} offline hidden · ` : ''}incoming: ${config.incoming}`}</Text>
-        <Button key="refresh" label="Refresh" plain dimColor onPress={() => refreshPeers($)} />
+        <Button key="refresh" label="Refresh" plain dimColor onPress={() => refreshAll($)} />
       </Box>
     </Box>
   )
@@ -329,7 +401,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
 
 function startTicker($: EngineInterface) {
   if (ticker) return
-  ticker = $.clock.every(20_000, () => void refreshPeers($))
+  ticker = $.clock.every(20_000, () => void refreshAll($))
 }
 
 // ---------- registration ----------
@@ -412,7 +484,7 @@ export const register: Register = (on, options) => {
   }).catch(($, e, next) => next(e))
 
   on('command.run', { command: 'switchboard' }, async $ => {
-    await refreshPeers($)
+    await refreshAll($)
     startTicker($)
     await $.ui.open({ id: PANE, title: 'Switchboard' })
     return { text: 'Switchboard opened.' }

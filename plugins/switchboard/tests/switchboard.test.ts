@@ -4,7 +4,10 @@ import {
   addTouch,
   ago,
   branchFromHead,
+  codexHandle,
+  codexToShow,
   collisionsFor,
+  findCodex,
   groupPeers,
   parseDm,
   parseEnvelope,
@@ -12,7 +15,7 @@ import {
   readConfig,
   shouldHold,
 } from '../hooks/register'
-import type { Presence } from '../types'
+import type { CodexThread, Presence } from '../types'
 
 const PANE_PROPS = {
   title: 'Switchboard',
@@ -100,4 +103,19 @@ test('the pane renders with nobody else around', async $ => {
     expect(await ui.find({ key: 'refresh' })).toBeDefined()
     await ui.unmount()
   }
+})
+
+test('Codex sessions: open ones first, addressed by the end of their id', async () => {
+  const threads: CodexThread[] = [
+    { id: '01a1-0000-aaaa1111', name: 'old closed', cwd: '/x', status: 'notLoaded', updatedAt: 1 },
+    { id: '01a1-0000-bbbb2222', name: 'recent closed', cwd: '/x', status: 'notLoaded', updatedAt: 5 },
+    { id: '01a1-0000-cccc3333', name: 'open one', cwd: '/x', status: 'idle', updatedAt: 2 },
+  ]
+  expect(codexToShow(threads).map(t => t.name)).toEqual(['open one', 'recent closed', 'old closed'])
+  expect(codexToShow(threads, 1).map(t => t.name)).toEqual(['open one'])
+  expect(codexHandle('01a1-0000-cccc3333')).toBe('codex:cccc3333')
+  expect(findCodex('codex:cccc3333', threads)?.name).toBe('open one')
+  expect(findCodex('codex:nope', threads)).toBeUndefined()
+  expect(findCodex('B — Builder', threads)).toBeUndefined()
+  expect(parseDm('codex:cccc3333 pick up the search work')).toEqual({ peer: 'codex:cccc3333', text: 'pick up the search work' })
 })

@@ -20,8 +20,11 @@ export type Note = {
   passed?: boolean
 }
 
+// A Codex session, from Codex's local app-server daemon (bin/codex-sessions.mjs).
+export type CodexThread = { id: string; name: string; cwd: string; status: string; updatedAt: number }
+
 declare module 'claude-code' {
   interface PluginState {
-    switchboard: { me: string; peers: PeerRow[]; presence: Presence[]; notes: Note[] }
+    switchboard: { me: string; peers: PeerRow[]; presence: Presence[]; notes: Note[]; codex: CodexThread[] }
   }
 }
