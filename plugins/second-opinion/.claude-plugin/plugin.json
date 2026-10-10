@@ -1,6 +1,6 @@
 {
   "name": "second-opinion",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Codex, Cursor and a second Claude inside Claude Code: an agent room (one chat, @mentions, handoffs) plus one-shot reviews and delegation",
   "author": {
     "name": "Brennen Barney"

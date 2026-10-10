@@ -101,9 +101,10 @@ const Composer: ClientModule<ComposerProps, ComposerState> = (props, surface) =>
     <Box flexDirection="column" width="100%">
       <Box flexDirection="column" width="100%" borderStyle="round" borderColor={state.focused ? props.color : 'gray'} paddingX={1}>
         {list.map((mention, i) => (
-          <Box key={`mention-${mention.id}`} width="100%" gap={1} backgroundColor={i === pick ? 'gray' : undefined}>
-            <Text bold={i === pick} color={mention.color}>{`@${mention.id}`}</Text>
-            <Text dimColor={i !== pick}>{mention.hint}</Text>
+          <Box key={`mention-${mention.id}`} width="100%" gap={1}>
+            <Text color={props.color}>{i === pick ? '▸' : ' '}</Text>
+            <Text bold={i === pick} dimColor={i !== pick} color={mention.color}>{`@${mention.id}`}</Text>
+            <Text dimColor>{mention.hint}</Text>
           </Box>
         ))}
         <Box minHeight={2} width="100%" marginTop={list.length ? 1 : 0}>
