@@ -12,7 +12,7 @@ Claude Code can already message other sessions on the same machine: its `SendMes
 
 | | |
 |---|---|
-| `/switchboard` | A pane listing every running session: busy or idle, and for sessions that also run Switchboard, their repository, branch, Syntaur ticket and the file they last edited. Each one has a **Message** button. |
+| `/switchboard` | A pane listing every running session: busy or idle, and for sessions that also run Switchboard, their repository, branch, Syntaur ticket and the file they last edited, with a message box at the bottom: press **Message** on a session (or type `@` in the box) to pick who it goes to. |
 | `/dm <session> <message>` | Message a session yourself. Its replies show up in the pane. |
 | `/broadcast <message>` | Message every session that runs Switchboard ("main is frozen for 10 minutes"). |
 | `/handoff <session>` | Claude writes a handoff of this session (goal, done, in progress, decisions, open problems, next step) and sends it to another session. |

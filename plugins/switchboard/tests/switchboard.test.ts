@@ -13,6 +13,8 @@ import {
   shouldHold,
 } from '../hooks/register'
 import type { Presence } from '../types'
+import { edit, openMentions } from '../hooks/composer'
+import type { ComposerMention, ComposerState } from '../hooks/composer'
 
 const PANE_PROPS = {
   title: 'Switchboard',
@@ -100,4 +102,27 @@ test('the pane renders with nobody else around', async $ => {
     expect(await ui.find({ key: 'refresh' })).toBeDefined()
     await ui.unmount()
   }
+})
+
+const SESSIONS: ComposerMention[] = ['A — Planner', 'B — Builder', 'mods'].map(id => ({ id, label: id, hint: '', color: 'gray' }))
+
+test('in the message box, @ finds a session by any part of its name and picks it as the recipient', async () => {
+  let state: ComposerState = { text: 'hi ', cursor: 3, focused: true, pick: 0 }
+  for (const key of ['@', 'b', 'u']) state = edit(state, { key }, SESSIONS).state
+  expect(openMentions(state, SESSIONS).map(m => m.id)).toEqual(['B — Builder'])
+  const picked = edit(state, { key: 'tab' }, SESSIONS)
+  expect(picked.to).toBe('B — Builder')
+  expect(picked.state).toMatchObject({ text: 'hi ', cursor: 3 })
+  const sent = edit({ ...picked.state, text: 'ship it', cursor: 7 }, { key: 'return' }, SESSIONS)
+  expect(sent.send).toBe('ship it')
+})
+
+test('the desktop pane has its own message box, and picking a recipient shows in it', async $ => {
+  const ui = await $.ui.mount({ plugin: 'switchboard', surface: 'desktop', component: 'Pane', requestId: 'switchboard', props: PANE_PROPS })
+  expect(await ui.find({ key: 'sb-composer' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Message a session…', in: 'sb-composer' })).toBeDefined()
+  await ui.post({ type: 'to', name: 'B — Builder' }, { in: 'sb-composer' })
+  expect(await ui.find({ type: 'Text', text: 'Message B — Builder…', in: 'sb-composer' })).toBeDefined()
+  expect(await ui.find({ key: 'to-clear', in: 'sb-composer' })).toBeDefined()
+  await ui.unmount()
 })

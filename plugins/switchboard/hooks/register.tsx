@@ -210,6 +210,27 @@ async function handoff($: EngineInterface, peer: string): Promise<string> {
 const SHOW_ELSEWHERE = 5
 const KIND: Record<string, string> = { interactive: 'session', bg: 'background', remote_control: 'remote', cloud: 'cloud' }
 let showAll = false
+// Who the message box sends to: picked with a session's Message button, Reply, or @ in the box.
+let to: string | undefined
+
+function setTo($: EngineInterface, name: string | undefined) {
+  to = name
+  $.ui.invalidate('ui.render')
+}
+
+async function sendFromBox($: EngineInterface, text: string) {
+  const body = text.trim()
+  if (!body) return
+  // With no session picked, a leading @word names one.
+  const parsed = to ? { peer: to, text: body } : parseDm(body)
+  if ('error' in parsed) {
+    $.ui.toast('Pick a session first: press Message on one, or type @ in the box.')
+    return
+  }
+  const failed = await sendTo($, parsed.peer, parsed.text)
+  $.ui.toast(failed ? `Not sent: ${failed}` : `Sent to ${parsed.peer}`)
+  $.ui.invalidate('ui.render')
+}
 
 // Who to list where: this repo's sessions first, then other live ones; offline ones only counted.
 export function groupPeers(peers: readonly PeerRow[], presence: readonly Presence[], myRoot: string) {
@@ -226,7 +247,13 @@ function toggleShowAll($: EngineInterface) {
 }
 
 async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
-  const { Box, Text, Button } = $.ui.resolve(e)
+  const elements = $.ui.resolve(e)
+  const { Box, Text, Button } = elements
+  // The desktop draws the pane's own full-width message box (composer.tsx); the terminal uses
+  // its text field; mobile, which has neither, uses /dm.
+  const Client = 'Client' in elements ? elements.Client : undefined
+  const Input = e.surface !== 'mobile' && 'Input' in elements ? elements.Input : undefined
+  const bodyRows = e.props.scroll?.bodyRows ?? 0
   const now = await $.clock.now().catch(() => Date.now())
   const myName = await read($, meAtom)
   const peers = await read($, peersAtom)
@@ -259,13 +286,21 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           </Box>
           <Text dimColor wrap="truncate-end">{`  ${detail}`}</Text>
         </Box>
-        <Button key={`dm-${peer.name}`} label="Message" variant="secondary" dimColor onPress={() => void $.prompt.fill({ text: `/dm ${peer.name} ` })} />
+        <Button key={`dm-${peer.name}`} label={to === peer.name ? 'Messaging' : 'Message'} variant={to === peer.name ? 'primary' : 'secondary'} dimColor={to !== peer.name} onPress={() => setTo($, peer.name)} />
       </Box>
     )
   }
 
+  const liveNames = [...here, ...elsewhere].map(p => p.name)
+  const mentions = liveNames.map(name => {
+    const peer = peers.find(p => p.name === name)
+    const p = byName.get(name)
+    return { id: name, label: name, hint: peer?.status === 'busy' ? 'working…' : p ? repoName(p.root) : (KIND[peer?.type ?? ''] ?? ''), color: peer?.status === 'busy' ? 'green' : 'gray' }
+  })
+
   return (
-    <Box flexDirection="column" width="100%">
+    <Box flexDirection="column" width="100%" minHeight={bodyRows > 0 ? bodyRows : undefined}>
+     <Box flexDirection="column" width="100%" flexGrow={1}>
       <Box gap={1}>
         <Text color="green">●</Text>
         <Text bold>{myName || '…'}</Text>
@@ -284,7 +319,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           <Text>{n.text.slice(0, 600)}</Text>
           <Box gap={1} marginTop={1}>
             <Button key={`pass-${n.id}`} label="Pass to Claude" variant="primary" onPress={() => passOn($, n.id)} />
-            <Button key={`reply-${n.id}`} label="Reply" variant="secondary" onPress={() => void $.prompt.fill({ text: `/dm ${n.peer} ` })} />
+            <Button key={`reply-${n.id}`} label="Reply" variant="secondary" onPress={() => setTo($, n.peer)} />
             <Button key={`dismiss-${n.id}`} label="Dismiss" variant="secondary" dimColor onPress={() => dismiss($, n.id)} />
           </Box>
         </Box>
@@ -319,7 +354,30 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
         </Box>
       ))}
 
-      <Box width="100%" justifyContent="space-between" alignItems="center" marginTop={1}>
+     </Box>
+
+      <Box flexDirection="column" width="100%" marginTop={1}>
+        {Client && e.surface === 'desktop' ? (
+          <Client
+            key="sb-composer"
+            module="./composer.tsx"
+            width="100%"
+            props={{ placeholder: to ? `Message ${to}…` : 'Message a session…', color: 'green', ...(to ? { to } : {}), mentions }}
+          />
+        ) : Input ? (
+          <Box flexDirection="column" width="100%" borderStyle="round" borderColor={to ? 'green' : 'gray'} paddingX={1}>
+            <Input
+              key={`sb-input-${to ?? 'none'}`}
+              placeholder={to ? `Message ${to}…` : 'Press Message on a session, or start with @name'}
+              submitLabel="send"
+              onSubmit={(value: string) => void sendFromBox($, value)}
+            />
+          </Box>
+        ) : (
+          <Text dimColor>{'Send with /dm <session> <message>'}</Text>
+        )}
+      </Box>
+      <Box width="100%" justifyContent="space-between" alignItems="center">
         <Text dimColor>{`${offline ? `${offline} offline hidden · ` : ''}incoming: ${config.incoming}`}</Text>
         <Button key="refresh" label="Refresh" plain dimColor onPress={() => refreshPeers($)} />
       </Box>
@@ -443,6 +501,15 @@ export const register: Register = (on, options) => {
     const peer = e.args.trim().replace(/^@/, '')
     if (!peer) return { text: 'Usage: /handoff <session>' }
     return { text: await handoff($, peer) }
+  })
+
+  // The desktop message box (composer.tsx) posts the picked recipient and what was sent.
+  on('ui.message', async ($, e, next) => {
+    if (e.element !== 'sb-composer') return next(e)
+    const data = (e.data ?? {}) as { type?: string; text?: string; name?: string | null }
+    if (data.type === 'to') setTo($, typeof data.name === 'string' ? data.name : undefined)
+    if (data.type === 'send' && data.text) await sendFromBox($, data.text)
+    return {}
   })
 
   on('ui.render', { component: 'Pane', requestId: 'switchboard' }, ($, e) => renderPane($, e))
