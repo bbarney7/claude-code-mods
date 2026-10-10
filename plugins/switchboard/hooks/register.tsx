@@ -434,6 +434,8 @@ function startTicker($: EngineInterface) {
 
 // ---------- registration ----------
 
+// Each command is also declared in commands/, so a host lists it as `/switchboard:<name>` before
+// any session exists (the desktop app's empty chat); the hooks answer both spellings.
 export const register: Register = (on, options) => {
   config = readConfig(options)
 
@@ -511,14 +513,14 @@ export const register: Register = (on, options) => {
     return next(e)
   }).catch(($, e, next) => next(e))
 
-  on('command.run', { command: 'switchboard' }, async $ => {
+  on('command.run', { command: ['switchboard', 'switchboard:switchboard'] }, async $ => {
     await refreshAll($)
     startTicker($)
     await $.ui.open({ id: PANE, title: 'Switchboard' })
     return { text: 'Switchboard opened.' }
   })
 
-  on('command.run', { command: 'dm' }, async ($, e) => {
+  on('command.run', { command: ['dm', 'switchboard:dm'] }, async ($, e) => {
     if ((await read($, peersAtom)).length === 0) await refreshPeers($)
     const parsed = resolveDm(e.args, await read($, peersAtom))
     if ('error' in parsed) return { text: parsed.error }
@@ -526,7 +528,7 @@ export const register: Register = (on, options) => {
     return { text: failed ? `Not sent: ${failed}` : `Sent to ${parsed.peer}.` }
   })
 
-  on('command.run', { command: 'broadcast' }, async ($, e) => {
+  on('command.run', { command: ['broadcast', 'switchboard:broadcast'] }, async ($, e) => {
     const text = e.args.trim()
     if (!text) return { text: 'Usage: /broadcast <message>' }
     await refreshPeers($)
@@ -540,7 +542,7 @@ export const register: Register = (on, options) => {
     return { text: `Sent to ${targets.length - failures.length} of ${targets.length} sessions.${failures.length ? `\n${failures.join('\n')}` : ''}` }
   })
 
-  on('command.run', { command: 'handoff' }, async ($, e) => {
+  on('command.run', { command: ['handoff', 'switchboard:handoff'] }, async ($, e) => {
     const peer = e.args.trim().replace(/^@/, '')
     if (!peer) return { text: 'Usage: /handoff <session>' }
     return { text: await handoff($, peer) }

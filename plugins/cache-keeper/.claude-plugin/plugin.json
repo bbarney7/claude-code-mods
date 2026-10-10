@@ -1,6 +1,6 @@
 {
   "name": "cache-keeper",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Keeps the prompt cache of an idle session warm with a tiny side question before it expires, for as long as you choose, then lets it expire, compacts, or clears with a handoff",
   "author": {
     "name": "Brennen Barney"

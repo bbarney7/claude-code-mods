@@ -1,6 +1,6 @@
 {
   "name": "mod-firewall",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A firewall for Claude Code mods: watches what every other mod does (network, processes, secret files, env vars) and asks, blocks or logs",
   "author": {
     "name": "Brennen Barney"

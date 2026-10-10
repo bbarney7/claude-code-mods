@@ -9,7 +9,7 @@
     {
       "name": "second-opinion",
       "description": "Codex, Cursor and a second Claude inside Claude Code: an agent room (one chat, @mentions, handoffs) plus one-shot reviews and delegation",
-      "version": "0.5.1",
+      "version": "0.5.2",
       "author": {
         "name": "Brennen Barney"
       },
@@ -19,7 +19,7 @@
     {
       "name": "mod-firewall",
       "description": "A firewall for Claude Code mods: watches what every other mod does (network, processes, secret files, env vars) and asks, blocks or logs",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "author": {
         "name": "Brennen Barney"
       },
@@ -29,7 +29,7 @@
     {
       "name": "switchboard",
       "description": "See and message your other Claude Code and Codex sessions: who is working on what, direct messages, broadcast, handoffs, an inbox that holds incoming messages for approval, and live warnings when another session edited the same file",
-      "version": "0.2.1",
+      "version": "0.2.2",
       "author": {
         "name": "Brennen Barney"
       },
@@ -39,7 +39,7 @@
     {
       "name": "cache-keeper",
       "description": "Keeps the prompt cache of an idle session warm with a tiny side question before it expires, for as long as you choose, then lets it expire, compacts, or clears with a handoff",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "author": {
         "name": "Brennen Barney"
       },

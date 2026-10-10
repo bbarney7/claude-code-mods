@@ -854,7 +854,7 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  on('command.run', { command: 'second-opinion' }, async ($, e) => {
+  on('command.run', { command: ['second-opinion', 'second-opinion:second-opinion'] }, async ($, e) => {
     const { agents, focus } = parseReview(e.args)
     const { diff, what } = await changesToReview($)
     if (!diff) return { text: 'Nothing to review: no uncommitted changes and no commits. To just talk to them, try /room.' }
@@ -864,7 +864,7 @@ export const register: Register = (on, options) => {
     return { text: `${agents.map(a => LABEL[a]).join(' and ')} reviewing ${what}. Results land in the Second opinion pane.` }
   })
 
-  on('command.run', { command: 'delegate' }, async ($, e) => {
+  on('command.run', { command: ['delegate', 'second-opinion:delegate'] }, async ($, e) => {
     const parsed = parseDelegate(e.args)
     if ('error' in parsed) return { text: parsed.error }
 
@@ -873,7 +873,7 @@ export const register: Register = (on, options) => {
     return { text: `${LABEL[parsed.agent]} is implementing: ${parsed.task}` }
   })
 
-  on('command.run', { command: 'opinions' }, async $ => {
+  on('command.run', { command: ['opinions', 'second-opinion:opinions'] }, async $ => {
     await $.ui.open({ id: PANE, title: 'Second opinion' })
     return { text: 'Second opinion pane opened.' }
   })
@@ -893,7 +893,7 @@ export const register: Register = (on, options) => {
     return {}
   })
 
-  on('command.run', { command: 'ask' }, async ($, e) => {
+  on('command.run', { command: ['ask', 'second-opinion:ask'] }, async ($, e) => {
     await $.ui.open({ id: ROOM_PANE, title: 'Agent room', focus: true })
     const text = normalizeAsk(e.args)
     if (!text) return { text: 'Agent room opened.' }

@@ -196,6 +196,8 @@ function startTicker($: EngineInterface) {
 
 // ---------- registration ----------
 
+// Each command is also declared in commands/, so a host lists it as `/cache-keeper:<name>` before
+// any session exists (the desktop app's empty chat); the hooks answer both spellings.
 export const register: Register = (on, options) => {
   config = readConfig(options)
 
@@ -229,7 +231,7 @@ export const register: Register = (on, options) => {
     return done
   })
 
-  on('command.run', { command: 'keepwarm' }, async ($, e) => {
+  on('command.run', { command: ['keepwarm', 'cache-keeper:keepwarm'] }, async ($, e) => {
     const parsed = parseArgs(e.args)
     if ('error' in parsed) return { text: parsed.error }
     overrides = { ...overrides, ...parsed.patch }

@@ -23,6 +23,8 @@ While this repository is private, installing needs a GitHub login with access to
 
 Each mod's README lists what else it needs. `second-opinion`, for example, uses the Codex, Cursor and Claude ACP adapters.
 
+**In the desktop app's empty chat**, mod commands only appear in their long form, such as `/switchboard:switchboard` or `/second-opinion:room`. A mod adds its short commands (`/switchboard`, `/room`) when a session starts, and an empty chat has no session yet. Once a chat is running, both forms work.
+
 ## Before you install any mod
 
 A mod is code that runs inside Claude Code with your permissions. It isn't sandboxed: it can read files, run programs, rewrite tool calls and talk to the network. Read a mod's source before you install it, from this repo or any other. Or install [mod-firewall](plugins/mod-firewall) to watch them for you. `claude plugin validate <folder>` lists every event a mod hooks and every engine call it makes. That's a quick way to see what it can do.

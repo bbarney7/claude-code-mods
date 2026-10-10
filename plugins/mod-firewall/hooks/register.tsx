@@ -363,6 +363,8 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
 
 // ---------- registration ----------
 
+// Each command is also declared in commands/, so a host lists it as `/mod-firewall:<name>` before
+// any session exists (the desktop app's empty chat); the hooks answer both spellings.
 export const register: Register = (on, options) => {
   config = readConfig(options)
 
@@ -374,7 +376,7 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  on('command.run', { command: 'firewall' }, async $ => {
+  on('command.run', { command: ['firewall', 'mod-firewall:firewall'] }, async $ => {
     await $.ui.open({ id: PANE, title: 'Mod firewall' })
     return { text: 'Mod firewall opened.' }
   })
