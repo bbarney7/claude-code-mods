@@ -1,6 +1,6 @@
 {
   "name": "switchboard",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "See and message your other Claude Code sessions: who is working on what, direct messages, broadcast, handoffs, an inbox that holds incoming messages for approval, and live warnings when another session edited the same file",
   "author": {
     "name": "Brennen Barney"
