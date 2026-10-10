@@ -5,6 +5,7 @@ import {
   ago,
   branchFromHead,
   collisionsFor,
+  groupPeers,
   parseDm,
   parseEnvelope,
   parseListing,
@@ -74,11 +75,28 @@ test('helpers: /dm parsing, branch from HEAD, relative times, settings', async (
   expect(readConfig({ incoming: 'hold', collisions: 'nope', collisionMinutes: -3 }).collisions).toBe('warn')
 })
 
+test('sessions group into this repo, other live ones, and a count of offline ones', async () => {
+  const peers = [
+    { name: 'b', ref: '1', type: 'interactive', status: 'idle' },
+    { name: 'c', ref: '2', type: 'interactive', status: 'busy' },
+    { name: 'old', ref: '3', type: 'remote_control', status: 'offline' },
+    { name: 'd', ref: '4', type: 'bg', status: 'idle' },
+  ]
+  const presence: Presence[] = [
+    { name: 'b', root: '/repo', state: 'idle', touched: [], updatedAt: 0 },
+    { name: 'c', root: '/other', state: 'busy', touched: [], updatedAt: 0 },
+  ]
+  const g = groupPeers(peers, presence, '/repo')
+  expect(g.here.map(p => p.name)).toEqual(['b'])
+  expect(g.elsewhere.map(p => p.name)).toEqual(['c', 'd'])
+  expect(g.offline).toBe(1)
+})
+
 test('the pane renders with nobody else around', async $ => {
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ plugin: 'switchboard', surface, component: 'Pane', requestId: 'switchboard', props: PANE_PROPS })
     expect(await ui.find({ type: 'Text', text: /incoming: hold-other-repos/ })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /No other sessions are running/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /No other session is working here/ })).toBeDefined()
     expect(await ui.find({ key: 'refresh' })).toBeDefined()
     await ui.unmount()
   }

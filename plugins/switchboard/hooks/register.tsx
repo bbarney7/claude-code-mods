@@ -207,7 +207,23 @@ async function handoff($: EngineInterface, peer: string): Promise<string> {
 
 // ---------- drawing ----------
 
-const STATE_DOT: Record<string, string> = { busy: '◉', idle: '○', shell: '▸' }
+const SHOW_ELSEWHERE = 5
+const KIND: Record<string, string> = { interactive: 'session', bg: 'background', remote_control: 'remote', cloud: 'cloud' }
+let showAll = false
+
+// Who to list where: this repo's sessions first, then other live ones; offline ones only counted.
+export function groupPeers(peers: readonly PeerRow[], presence: readonly Presence[], myRoot: string) {
+  const byName = new Map(presence.map(p => [p.name, p]))
+  const live = peers.filter(p => p.status !== 'offline')
+  const here = live.filter(p => byName.get(p.name)?.root === myRoot)
+  const elsewhere = live.filter(p => !here.includes(p)).sort((a, b) => Number(b.status === 'busy') - Number(a.status === 'busy') || Number(byName.has(b.name)) - Number(byName.has(a.name)))
+  return { here, elsewhere, offline: peers.length - live.length }
+}
+
+function toggleShowAll($: EngineInterface) {
+  showAll = !showAll
+  $.ui.invalidate('ui.render')
+}
 
 async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
   const { Box, Text, Button } = $.ui.resolve(e)
@@ -218,58 +234,94 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
   const notes = await read($, notesAtom)
   const byName = new Map(presence.map(p => [p.name, p]))
   const inbox = notes.filter(n => n.held)
-  const recent = notes.filter(n => !n.held).slice(-8)
-  const ordered = [...peers].sort((a, b) => Number(byName.has(b.name)) - Number(byName.has(a.name)))
+  const recent = notes.filter(n => !n.held).slice(-5)
+  const { here, elsewhere, offline } = groupPeers(peers, presence, root)
+  const shown = showAll ? elsewhere : elsewhere.slice(0, SHOW_ELSEWHERE)
+  const repoName = (path: string) => path.split('/').pop() ?? path
+
+  const row = (peer: PeerRow) => {
+    const p = byName.get(peer.name)
+    const touch = p?.touched[0]
+    const detail =
+      peer.status === 'busy'
+        ? 'working…'
+        : touch
+          ? `edited ${touch.path.replace(`${p?.root ?? ''}/`, '')} · ${ago(now - touch.at)}`
+          : p
+            ? [p.root === root ? undefined : repoName(p.root), p.branch, p.ticket].filter(Boolean).join(' · ') || 'idle'
+            : KIND[peer.type] ?? peer.type
+    return (
+      <Box key={peer.name} width="100%" justifyContent="space-between" alignItems="center" marginTop={1}>
+        <Box flexDirection="column" flexShrink={1}>
+          <Box gap={1}>
+            <Text color={peer.status === 'busy' ? 'green' : 'gray'}>●</Text>
+            <Text bold>{peer.name}</Text>
+          </Box>
+          <Text dimColor wrap="truncate-end">{`  ${detail}`}</Text>
+        </Box>
+        <Button key={`dm-${peer.name}`} label="Message" variant="secondary" dimColor onPress={() => void $.prompt.fill({ text: `/dm ${peer.name} ` })} />
+      </Box>
+    )
+  }
 
   return (
-    <Box flexDirection="column">
-      <Text dimColor>
-        {`you are ${myName || '…'}${mine?.branch ? ` · ${mine.branch}` : ''}${mine?.ticket ? ` · ${mine.ticket}` : ''} · incoming: ${config.incoming} · /config to change`}
-      </Text>
+    <Box flexDirection="column" width="100%">
+      <Box gap={1}>
+        <Text color="green">●</Text>
+        <Text bold>{myName || '…'}</Text>
+        <Text dimColor>{[root ? repoName(root) : '', mine?.branch, mine?.ticket].filter(Boolean).join(' · ')}</Text>
+      </Box>
 
-      {inbox.length > 0 && <Text bold color="yellow">{`\nInbox (${inbox.length} held)`}</Text>}
+      {inbox.length > 0 && (
+        <Text bold color="yellow" >{`Inbox · ${inbox.length}`}</Text>
+      )}
       {inbox.map(n => (
-        <Box key={n.id} flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1}>
-          <Text bold>{`${n.peer} · ${ago(now - n.at)}`}</Text>
+        <Box key={n.id} flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1} marginTop={1}>
+          <Box gap={1}>
+            <Text bold>{n.peer}</Text>
+            <Text dimColor>{ago(now - n.at)}</Text>
+          </Box>
           <Text>{n.text.slice(0, 600)}</Text>
-          <Box>
-            <Button key={`pass-${n.id}`} label="Pass to Claude" onPress={() => passOn($, n.id)} />
-            <Button key={`reply-${n.id}`} label="Reply" onPress={() => void $.prompt.fill({ text: `/dm ${n.peer} ` })} />
-            <Button key={`dismiss-${n.id}`} label="Dismiss" onPress={() => dismiss($, n.id)} />
+          <Box gap={1} marginTop={1}>
+            <Button key={`pass-${n.id}`} label="Pass to Claude" variant="primary" onPress={() => passOn($, n.id)} />
+            <Button key={`reply-${n.id}`} label="Reply" variant="secondary" onPress={() => void $.prompt.fill({ text: `/dm ${n.peer} ` })} />
+            <Button key={`dismiss-${n.id}`} label="Dismiss" variant="secondary" dimColor onPress={() => dismiss($, n.id)} />
           </Box>
         </Box>
       ))}
 
-      <Text bold>{`\nSessions (${peers.length})`}</Text>
-      {peers.length === 0 && <Text dimColor>No other sessions are running.</Text>}
-      {ordered.map(peer => {
-        const p = byName.get(peer.name)
-        const where = p ? `${p.root.split('/').pop() ?? p.root}${p.branch ? `@${p.branch}` : ''}${p.ticket ? ` · ${p.ticket}` : ''}` : 'no switchboard'
-        const lastTouch = p?.touched[0]
-        return (
-          <Box key={peer.name} flexDirection="column">
-            <Box>
-              <Text color={peer.status === 'busy' ? 'green' : undefined}>
-                {`${STATE_DOT[peer.status] ?? '·'} ${peer.name}`}
-              </Text>
-              <Text dimColor>{`  ${peer.type} · ${peer.status} · ${where}`}</Text>
-              <Button key={`dm-${peer.name}`} label="Message" onPress={() => void $.prompt.fill({ text: `/dm ${peer.name} ` })} />
-            </Box>
-            {lastTouch && (
-              <Text dimColor>{`    editing ${lastTouch.path.replace(`${p?.root ?? ''}/`, '')} · ${ago(now - lastTouch.at)}`}</Text>
-            )}
-          </Box>
-        )
-      })}
-
-      {recent.length > 0 && <Text bold>{'\nRecent messages'}</Text>}
-      {recent.map(n => (
-        <Text key={n.id} dimColor={n.direction === 'out'}>
-          {`${n.direction === 'out' ? '→' : '←'} ${n.peer}: ${n.text.replace(/\s+/g, ' ').slice(0, 140)}${n.passed ? ' (passed on)' : ''}`}
-        </Text>
-      ))}
       <Box marginTop={1}>
-        <Button key="refresh" label="Refresh" onPress={() => refreshPeers($)} />
+        <Text bold>{`This repo · ${here.length}`}</Text>
+      </Box>
+      {here.length === 0 && <Text dimColor>No other session is working here.</Text>}
+      {here.map(row)}
+
+      {elsewhere.length > 0 && (
+        <Box marginTop={1}>
+          <Text bold>{`Other sessions · ${elsewhere.length}`}</Text>
+        </Box>
+      )}
+      {shown.map(row)}
+      {elsewhere.length > SHOW_ELSEWHERE && (
+        <Button key="more" label={showAll ? 'Show fewer' : `Show ${elsewhere.length - SHOW_ELSEWHERE} more`} plain dimColor onPress={() => toggleShowAll($)} />
+      )}
+
+      {recent.length > 0 && (
+        <Box marginTop={1}>
+          <Text bold>Messages</Text>
+        </Box>
+      )}
+      {recent.map(n => (
+        <Box key={n.id} gap={1}>
+          <Text dimColor>{n.direction === 'out' ? '→' : '←'}</Text>
+          <Text bold>{n.peer}</Text>
+          <Text dimColor wrap="truncate-end">{`${n.text.replace(/\s+/g, ' ').slice(0, 140)}${n.passed ? ' · passed on' : ''}`}</Text>
+        </Box>
+      ))}
+
+      <Box width="100%" justifyContent="space-between" alignItems="center" marginTop={1}>
+        <Text dimColor>{`${offline ? `${offline} offline hidden · ` : ''}incoming: ${config.incoming}`}</Text>
+        <Button key="refresh" label="Refresh" plain dimColor onPress={() => refreshPeers($)} />
       </Box>
     </Box>
   )
