@@ -10,6 +10,7 @@ import {
   findCodex,
   groupPeers,
   parseDm,
+  resolveDm,
   parseEnvelope,
   parseListing,
   readConfig,
@@ -118,4 +119,21 @@ test('Codex sessions: open ones first, addressed by the end of their id', async 
   expect(findCodex('codex:nope', threads)).toBeUndefined()
   expect(findCodex('B — Builder', threads)).toBeUndefined()
   expect(parseDm('codex:cccc3333 pick up the search work')).toEqual({ peer: 'codex:cccc3333', text: 'pick up the search work' })
+})
+
+test('/dm finds sessions whose names have spaces, and tells apart two with the same name', async () => {
+  const peers = [
+    { name: 'A — Planner', ref: 'aa11', type: 'interactive', status: 'idle' },
+    { name: 'A', ref: 'aa22', type: 'interactive', status: 'idle' },
+    { name: 'Room command', ref: 'rc01', type: 'interactive', status: 'idle' },
+    { name: 'Room command', ref: 'rc02', type: 'interactive', status: 'idle' },
+    { name: 'brennen-74', ref: 'b74x', type: 'interactive', status: 'idle' },
+  ]
+  expect(resolveDm('A — Planner search first', peers)).toEqual({ peer: 'A — Planner', text: 'search first' })
+  expect(resolveDm('A hi', peers)).toEqual({ peer: 'A', text: 'hi' })
+  expect(resolveDm('@brennen-74 pause', peers)).toEqual({ peer: 'brennen-74', text: 'pause' })
+  expect(resolveDm('Room command [rc02] take this', peers)).toEqual({ peer: 'Room command [rc02]', text: 'take this' })
+  expect(resolveDm('rc01 take this', peers)).toEqual({ peer: 'Room command [rc01]', text: 'take this' })
+  expect(resolveDm('codex:cccc3333 go', peers)).toEqual({ peer: 'codex:cccc3333', text: 'go' })
+  expect('error' in resolveDm('A — Planner', peers)).toBe(true)
 })

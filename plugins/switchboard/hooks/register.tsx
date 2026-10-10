@@ -68,6 +68,25 @@ export function addTouch(touched: readonly Touch[], path: string, now: number): 
 }
 
 // "/dm run-c1 pause before you push" -> peer + text
+// /dm's target, read against the sessions listed: a full name (names can have spaces, so the
+// longest one that prefixes the args wins), a session's [ref], or a Codex `codex:` handle.
+// A name two sessions share is sent as `name [ref]`, the spelling SendMessage takes for that.
+export function resolveDm(args: string, peers: readonly PeerRow[]): { peer: string; text: string } | { error: string } {
+  const rest = args.trim().replace(/^@/, '')
+  if (rest.startsWith('codex:')) return parseDm(rest)
+  const target = (p: PeerRow) => (peers.filter(q => q.name === p.name).length > 1 ? `${p.name} [${p.ref}]` : p.name)
+  const byLength = [...peers].sort((a, b) => b.name.length - a.name.length)
+  const spellings = [...byLength.map(p => ({ spelled: `${p.name} [${p.ref}]`, peer: `${p.name} [${p.ref}]` })), ...byLength.map(p => ({ spelled: p.name, peer: target(p) }))]
+  for (const { spelled, peer } of spellings) {
+    if (rest === spelled) return { error: 'Usage: /dm <session> <message>' }
+    if (rest.startsWith(`${spelled} `)) return { peer, text: rest.slice(spelled.length).trim() }
+  }
+  const [first = '', ...words] = rest.split(/\s+/)
+  const byRef = peers.find(p => p.ref && (first === p.ref || first === `[${p.ref}]`))
+  if (byRef) return words.length ? { peer: target(byRef), text: words.join(' ') } : { error: 'Usage: /dm <session> <message>' }
+  return parseDm(rest)
+}
+
 export function parseDm(args: string): { peer: string; text: string } | { error: string } {
   const [peer = '', ...rest] = args.trim().split(/\s+/)
   const text = rest.join(' ').trim()
@@ -149,6 +168,15 @@ async function refreshCodex($: EngineInterface) {
 async function refreshAll($: EngineInterface) {
   await refreshPeers($)
   await refreshCodex($)
+}
+
+// Puts a /dm line in Claude's prompt box. The box can refuse (the app draws its own, or a dialog
+// holds the keys); then a toast says so and shows the line to type.
+async function fillDm($: EngineInterface, target: string) {
+  const line = `/dm ${target} `
+  const filled = (await $.prompt.fill({ text: line }).catch(() => ({ isFilled: false, refusal: undefined }))) as { isFilled: boolean; refusal?: string }
+  $.ui.log(`switchboard: prompt.fill ${filled.isFilled ? 'ok' : `refused (${filled.refusal ?? 'unknown'})`}`, { to: 'debug' })
+  if (!filled.isFilled) $.ui.toast(`Couldn't fill the prompt box${filled.refusal ? ` (${filled.refusal})` : ''}. Type: ${line}<message>`)
 }
 
 async function readPresence($: EngineInterface) {
@@ -311,7 +339,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           </Box>
           <Text dimColor wrap="truncate-end">{`  ${detail}`}</Text>
         </Box>
-        <Button key={`dm-${peer.name}`} label="Message" variant="secondary" dimColor onPress={() => void $.prompt.fill({ text: `/dm ${peer.name} ` })} />
+        <Button key={`dm-${peer.ref || peer.name}`} label="Message" variant="secondary" dimColor onPress={() => fillDm($, peers.filter(q => q.name === peer.name).length > 1 ? `${peer.name} [${peer.ref}]` : peer.name)} />
       </Box>
     )
   }
@@ -336,7 +364,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
           <Text>{n.text.slice(0, 600)}</Text>
           <Box gap={1} marginTop={1}>
             <Button key={`pass-${n.id}`} label="Pass to Claude" variant="primary" onPress={() => passOn($, n.id)} />
-            <Button key={`reply-${n.id}`} label="Reply" variant="secondary" onPress={() => void $.prompt.fill({ text: `/dm ${n.peer} ` })} />
+            <Button key={`reply-${n.id}`} label="Reply" variant="secondary" onPress={() => fillDm($, n.peer)} />
             <Button key={`dismiss-${n.id}`} label="Dismiss" variant="secondary" dimColor onPress={() => dismiss($, n.id)} />
           </Box>
         </Box>
@@ -374,7 +402,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
               {`  ${[repoName(t.cwd), t.status === 'active' ? 'working…' : `active ${ago(now - t.updatedAt)}`].filter(Boolean).join(' · ')}`}
             </Text>
           </Box>
-          <Button key={`dm-${t.id}`} label="Message" variant="secondary" dimColor onPress={() => void $.prompt.fill({ text: `/dm ${codexHandle(t.id)} ` })} />
+          <Button key={`dm-${t.id}`} label="Message" variant="secondary" dimColor onPress={() => fillDm($, codexHandle(t.id))} />
         </Box>
       ))}
 
@@ -491,7 +519,8 @@ export const register: Register = (on, options) => {
   })
 
   on('command.run', { command: 'dm' }, async ($, e) => {
-    const parsed = parseDm(e.args)
+    if ((await read($, peersAtom)).length === 0) await refreshPeers($)
+    const parsed = resolveDm(e.args, await read($, peersAtom))
     if ('error' in parsed) return { text: parsed.error }
     const failed = await sendTo($, parsed.peer, parsed.text)
     return { text: failed ? `Not sent: ${failed}` : `Sent to ${parsed.peer}.` }
