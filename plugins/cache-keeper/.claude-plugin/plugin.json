@@ -1,14 +1,21 @@
 {
   "name": "cache-keeper",
-  "version": "0.1.1",
-  "description": "Keeps the prompt cache of an idle session warm with a tiny side question before it expires, for as long as you choose, then lets it expire, compacts, or clears with a handoff",
+  "version": "0.2.0",
+  "description": "Keeps an idle session's prompt cache warm for as long as you choose, then compacts or hands off before it expires; stops a costly cold send once with its price",
   "author": {
     "name": "Brennen Barney"
   },
   "homepage": "https://github.com/bbarney7/claude-code-mods/tree/main/plugins/cache-keeper",
   "repository": "https://github.com/bbarney7/claude-code-mods",
   "license": "MIT",
-  "keywords": ["cache", "prompt-caching", "cost", "compaction", "handoff"],
+  "keywords": [
+    "cache",
+    "prompt-caching",
+    "cost",
+    "compaction",
+    "handoff",
+    "cold-send"
+  ],
   "userConfig": {
     "keepWarm": {
       "type": "boolean",
@@ -27,7 +34,11 @@
       "title": "Cache keeper: before the cache finally expires",
       "description": "nothing: let it expire. compact: compact the conversation while the cache is still warm, so the next message re-caches only the summary. handoff: Claude writes a handoff, the conversation is cleared, and the handoff is kept for the next message.",
       "default": "nothing",
-      "options": ["nothing", "compact", "handoff"]
+      "options": [
+        "nothing",
+        "compact",
+        "handoff"
+      ]
     },
     "cacheTtlMinutes": {
       "type": "number",
@@ -40,6 +51,29 @@
       "title": "Cache keeper: act this many minutes before expiry",
       "description": "How early to send the keep-warm, compact or handoff. At most half the cache lifetime.",
       "default": 5
+    },
+    "coldGuard": {
+      "type": "string",
+      "title": "Cache keeper: before a costly cold send",
+      "description": "When the cache has expired and the conversation is large, the next message re-writes all of it at the cache-write price. refuse: drop that message once with its price; sending it again goes through. warn: show the price and send. off: say nothing.",
+      "default": "refuse",
+      "options": [
+        "refuse",
+        "warn",
+        "off"
+      ]
+    },
+    "guardMinTokens": {
+      "type": "number",
+      "title": "Cache keeper: guard conversations of at least (tokens)",
+      "description": "Smaller conversations are cheap to re-write and pass without a word.",
+      "default": 50000
+    },
+    "showRow": {
+      "type": "boolean",
+      "title": "Cache keeper: show the cache row above the prompt",
+      "description": "One row: warm or cold, time left, keep-warms and what they cost. Off, the status line shows a short version instead.",
+      "default": true
     }
   }
 }
