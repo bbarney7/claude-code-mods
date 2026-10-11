@@ -1,6 +1,6 @@
 {
   "name": "second-opinion",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "description": "Codex, Cursor and a second Claude inside Claude Code: an agent room (one chat, @mentions, handoffs) plus one-shot reviews and delegation",
   "author": {
     "name": "Brennen Barney"
@@ -56,10 +56,11 @@
     },
     "roomEdits": {
       "type": "string",
-      "title": "Room: can agents edit files",
-      "description": "allow: Codex, Cursor and the room's Claude edit files and run commands in the repository on their own (anything outside it still asks you in the room). ask: each asks you in the room before an edit; Cursor, which cannot ask, only reads.",
-      "default": "allow",
+      "title": "Room: what agents may do",
+      "description": "inherit: the room follows the main session's permission mode (bypass gives Codex full access, Claude bypassPermissions, and answers Cursor's questions; accept edits lets them edit the repo; default makes them ask first; plan keeps them read-only). allow: they edit the repository on their own. ask: each asks you in the room before an edit; Cursor, which cannot ask, only reads.",
+      "default": "inherit",
       "options": [
+        "inherit",
         "allow",
         "ask"
       ]

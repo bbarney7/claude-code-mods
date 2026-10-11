@@ -1,25 +1,38 @@
+import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
 import {
+  ACCESS_LABEL,
+  AGENT_MODE,
+  accessFor,
+  applyChunks,
   argvFor,
+  finishMessage,
   framePrompt,
   handoffTargets,
   historyFor,
   isBareAck,
   isLive,
+  modelLabel,
   normalizeAsk,
   parseDelegate,
   parseMentions,
+  parseModelArgs,
   parseReview,
+  permissionChoices,
+  questionText,
   readConfig,
   reviewPrompt,
   roomTranscript,
   sessionExcerpt,
+  settingsFor,
   targetsOf,
 } from '../hooks/register'
-import type { RoomMessage } from '../types'
+import type { PermissionOption, Room, RoomMessage } from '../types'
 import { edit, mentionQuery, openMentions } from '../hooks/composer'
 import type { ComposerMention, ComposerState } from '../hooks/composer'
+import { advance, clock, elapsed } from '../hooks/controls'
+import type { ControlsProps, ControlsState } from '../hooks/controls'
 
 const PANE_PROPS = {
   title: 'Pane',
@@ -119,12 +132,13 @@ test('the review pane starts empty with a hint', async $ => {
   }
 })
 
-test('the agent room: its own full-width message box on the desktop, the text field elsewhere, /ask on mobile', async $ => {
+test('the agent room: its own full-width message box on the desktop, the text field elsewhere, /ask on mobile', async ($, on) => {
+  mock.clock(on)
   const desktop = await $.ui.mount({ plugin: 'second-opinion', surface: 'desktop', component: 'Pane', requestId: 'agent-room', props: PANE_PROPS })
   expect(await desktop.find({ type: 'Text', text: 'Type @ to pick who answers' })).toBeDefined()
   expect(await desktop.find({ key: 'room-composer' })).toBeDefined()
   // Click, type, and the box shows the text with its caret; picking a chip changes who answers.
-  await desktop.pointer({ type: 'down', x: 2, y: 1, button: 'left' })
+  await desktop.pointer({ type: 'down', x: 2, y: 1, button: 'left', in: 'room-composer' })
   for (const key of ['h', 'i']) await desktop.key({ key, in: 'room-composer' })
   expect(await desktop.find({ type: 'Text', text: /^hi▏$/, in: 'room-composer' })).toBeDefined()
   for (const key of ['space', '@', 'c', 'u']) await desktop.key({ key, in: 'room-composer' })
@@ -184,7 +198,8 @@ test('typing @ opens the mention list; arrows pick, Tab or Enter completes, Esca
   expect(openMentions(closed, MENTIONS)).toEqual([])
 })
 
-test('the room header shows each agent with a status dot', async $ => {
+test('the room header shows each agent with a status dot', async ($, on) => {
+  mock.clock(on)
   const ui = await $.ui.mount({ plugin: 'second-opinion', surface: 'desktop', component: 'Pane', requestId: 'agent-room', props: PANE_PROPS })
   for (const name of ['Codex', 'Cursor', 'Claude']) expect(await ui.find({ type: 'Text', text: name })).toBeDefined()
   expect(isLive('ready')).toBe(true)
@@ -223,20 +238,20 @@ test('a fresh agent gets the tail of the Claude session, without tool noise or r
 })
 
 test('settings fall back to defaults when missing or out of range', async () => {
-  expect(readConfig({})).toEqual({ roomSeed: 'recent', roomSeedTurns: 10, claudeReturn: 'message', claudeReturnMessages: 8, roomEdits: 'allow' })
+  expect(readConfig({})).toEqual({ roomSeed: 'recent', roomSeedTurns: 10, claudeReturn: 'message', claudeReturnMessages: 8, roomEdits: 'inherit' })
   expect(readConfig({ roomSeed: 'summary', roomSeedTurns: 25, claudeReturn: 'full', claudeReturnMessages: 3 })).toEqual({
     roomSeed: 'summary',
     roomSeedTurns: 25,
     claudeReturn: 'full',
     claudeReturnMessages: 3,
-    roomEdits: 'allow',
+    roomEdits: 'inherit',
   })
   expect(readConfig({ roomSeed: 'everything', roomSeedTurns: -4, claudeReturnMessages: 9999 })).toEqual({
     roomSeed: 'recent',
     roomSeedTurns: 1,
     claudeReturn: 'message',
     claudeReturnMessages: 200,
-    roomEdits: 'allow',
+    roomEdits: 'inherit',
   })
 })
 
@@ -266,8 +281,12 @@ test('the room prompt says whether the agent may edit', async () => {
   const trigger: RoomMessage = { id: 't', from: 'you', text: 'fix it' }
   expect(framePrompt('codex', true, '', trigger, 0, '/repo')).toContain('edit files and run commands there')
   expect(framePrompt('codex', true, '', trigger, 0, '/repo', '', 'ask')).toContain('propose a change before making it')
-  expect(readConfig({}).roomEdits).toBe('allow')
+  expect(framePrompt('codex', true, '', trigger, 0, '/repo', '', 'full')).toContain('with full access')
+  expect(framePrompt('codex', true, '', trigger, 0, '/repo', '', 'read')).toContain('planning only')
+  expect(readConfig({}).roomEdits).toBe('inherit')
   expect(readConfig({ roomEdits: 'ask' }).roomEdits).toBe('ask')
+  expect(readConfig({ roomEdits: 'allow' }).roomEdits).toBe('allow')
+  expect(readConfig({ roomEdits: 'sometimes' }).roomEdits).toBe('inherit')
 })
 
 test('the first prompt tells a room agent who @main and @claude are', async () => {
@@ -293,3 +312,178 @@ for (const [label, variables, expected] of [
     expect(registered.includes('room')).toBe(expected)
   })
 }
+
+// ---------- 0.6: permissions follow the main session, short questions, quiet replies, models ----------
+
+const CODEX_EXEC: PermissionOption[] = [
+  { optionId: 'allow_once', name: 'Yes, proceed', kind: 'allow_once' },
+  { optionId: 'allow_for_session', name: "Yes, and don't ask again for this command in this session", kind: 'allow_always' },
+  { optionId: 'accept_execpolicy_amendment', name: "Yes, and don't ask again for commands that start with `npm run test:e2e`", kind: 'allow_always' },
+  { optionId: 'decline', name: 'No, continue without running it', kind: 'reject_once' },
+  { optionId: 'cancel', name: 'No, and tell Codex what to do differently', kind: 'reject_once' },
+]
+
+test("Codex's long approval sentences become short buttons, and a question always has a no", async () => {
+  expect(permissionChoices(CODEX_EXEC).map(c => c.label)).toEqual(['Allow', 'Allow for session', 'Always allow npm run test:e2e', 'Skip', 'Deny'])
+  expect(permissionChoices(CODEX_EXEC).map(c => c.id)).toEqual(CODEX_EXEC.map(o => o.optionId))
+  const onlyYes = permissionChoices([{ optionId: 'ok', name: 'Allow', kind: 'allow_once' }])
+  expect(onlyYes).toEqual([
+    { id: 'ok', label: 'Allow', kind: 'allow_once' },
+    { id: '', label: 'Deny', kind: 'reject_once' },
+  ])
+  expect(questionText({ title: 'Run command', detail: 'npm run test:e2e' })).toBe('run `npm run test:e2e`')
+  expect(questionText({ title: 'Edit file' })).toBe('Edit file')
+})
+
+test("the room follows the main session's permission mode unless a setting pins it", async () => {
+  expect(accessFor('inherit', 'bypassPermissions')).toBe('full')
+  expect(accessFor('inherit', 'acceptEdits')).toBe('edit')
+  expect(accessFor('inherit', 'auto')).toBe('auto')
+  expect(accessFor('inherit', 'plan')).toBe('read')
+  expect(accessFor('inherit', 'default')).toBe('ask')
+  expect(accessFor('inherit', undefined)).toBe('ask')
+  expect(accessFor('allow', 'plan')).toBe('edit')
+  expect(accessFor('ask', 'bypassPermissions')).toBe('ask')
+  expect(AGENT_MODE.full).toEqual({ codex: 'agent-full-access', cursor: 'agent', claude: 'bypassPermissions' })
+  expect(ACCESS_LABEL.full).toBe('full access')
+  // Bypass: each agent's widest mode, and the bridge answers what an agent still asks.
+  expect(settingsFor('claude', 'full', {})).toEqual({ mode: 'bypassPermissions', autoApprove: true })
+  expect(settingsFor('codex', 'ask', { codex: { model: 'gpt-6-luna', effort: 'low' } })).toEqual({
+    mode: 'read-only',
+    autoApprove: false,
+    model: 'gpt-6-luna',
+    effort: 'low',
+  })
+})
+
+test('an agent is told when its permissions change, and later prompts ask for a brief answer', async () => {
+  const trigger: RoomMessage = { id: 't', from: 'you', text: 'go on' }
+  const first = framePrompt('codex', true, '', trigger, 0, '/repo', '', 'ask')
+  expect(first).toContain('under about 120 words')
+  const later = framePrompt('codex', false, '', trigger, 0, '/repo', '', 'full', true)
+  expect(later).toContain('Your permissions changed.')
+  expect(later).toContain('with full access')
+  expect(later).toContain('(Room reply: answer first, briefly.)')
+  expect(framePrompt('codex', false, '', trigger, 0, '/repo', '', 'full', false)).not.toContain('permissions changed')
+})
+
+test('narration between tool calls is folded away; the answer is the last segment', async () => {
+  const start: RoomMessage = { id: 'm', from: 'codex', text: '', isStreaming: true }
+  const streamed = applyChunks(start, [
+    { segment: 0, text: "I'll check the tests. " },
+    { segment: 0, text: 'Running them now.' },
+    { segment: 1, text: 'The tests pass; ' },
+    { segment: 1, text: 'two edge cases are uncovered.' },
+  ])
+  expect(streamed).toMatchObject({ text: 'The tests pass; two edge cases are uncovered.', notes: ["I'll check the tests. Running them now."], segment: 1 })
+  const done = finishMessage(streamed, { isError: false, isStopped: false, at: 5 })
+  expect(done).toMatchObject({ text: 'The tests pass; two edge cases are uncovered.', isStreaming: false, endedAt: 5 })
+  // A turn that ended right after a tool call answers with its last narration.
+  const quiet = finishMessage(applyChunks(start, [{ segment: 0, text: 'Created hello.txt.' }, { segment: 1, text: '' }]), { isError: false, isStopped: false, at: 1 })
+  expect(quiet.text).toBe('Created hello.txt.')
+  expect(finishMessage(start, { isError: false, isStopped: true, at: 1 }).text).toBe('(stopped)')
+  expect(finishMessage(start, { isError: true, isStopped: false, error: 'usage limit', at: 1 }).text).toBe('⚠ usage limit')
+})
+
+test('models: a short label, and /room model picks one by agent', async () => {
+  const options = { model: { current: 'gpt-6.1-sol', values: [{ value: 'gpt-6-luna', name: '6 Luna' }, { value: 'gpt-6.1-sol', name: '6.1 Sol' }] }, effort: { current: 'medium', values: [] } }
+  expect(modelLabel(options, undefined)).toBe('6.1 Sol · medium')
+  expect(modelLabel(options, { model: 'gpt-6-luna', effort: 'low' })).toBe('6 Luna · low')
+  expect(modelLabel(undefined, undefined)).toBe('')
+  expect(parseModelArgs([])).toEqual({})
+  expect(parseModelArgs(['@codex', 'gpt-6-luna', 'low'])).toEqual({ agent: 'codex', model: 'gpt-6-luna', effort: 'low' })
+  expect('error' in parseModelArgs(['gemini'])).toBe(true)
+})
+
+test("the working line's clock keeps counting between redraws and resets on new props", async () => {
+  const props: ControlsProps = { questions: [], working: [{ id: 'w', who: 'Codex', color: 'green', elapsedMs: 10_000, doing: 'npm test' }], canInterrupt: true, canShare: false, canReset: false }
+  let state: ControlsState = { tick: 0, answered: {}, stopping: true, base: {} }
+  state = advance(state, props)
+  for (let i = 0; i < 20; i += 1) state = advance(state, props)
+  expect(clock(elapsed(state, props.working[0]!))).toBe('13s')
+  const redrawn = { ...props, working: [{ ...props.working[0]!, elapsedMs: 20_000 }] }
+  expect(clock(elapsed(advance(state, redrawn), redrawn.working[0]!))).toBe('20s')
+  // Once nobody works, a pressed Interrupt is forgotten; an answer goes with its question.
+  const idle = advance({ ...state, answered: { gone: 'Allow' } }, { ...props, working: [] })
+  expect(idle).toMatchObject({ stopping: false, answered: {} })
+  expect(clock(125_000)).toBe('2m05s')
+})
+
+// The room's value, held by the test beneath the mod, so a test can open the room on a question.
+function holdRoom(on: On, seed: Partial<Room>) {
+  mock.clock(on, { now: 60_000 })
+  const held = {
+    value: { messages: [], status: { codex: 'busy', cursor: 'idle', claude: 'idle' }, detail: '', permissions: [], defaultAgent: 'codex', access: 'ask', models: {}, prefs: {}, ...seed } as Room,
+    version: 1,
+  }
+  on('state.get', { plugin: 'second-opinion', key: 'room' }, async () => ({ value: { value: held.value, version: held.version } }))
+  on('state.set', { plugin: 'second-opinion', key: 'room' }, async ($, e) => {
+    if (e.ifVersion !== undefined && e.ifVersion !== held.version) return { value: { isSet: false as const, version: held.version } }
+    held.value = e.value as Room
+    held.version += 1
+    return { value: { isSet: true as const, version: held.version } }
+  })
+  return held
+}
+
+const QUESTION = { id: 'codex-q1', agent: 'codex' as const, title: 'Run command', detail: 'npm run test:e2e', options: CODEX_EXEC }
+
+test('on the desktop a question is answered from the controls module, which says so, and the room records it', async ($, on) => {
+  const held = holdRoom(on, { permissions: [QUESTION], messages: [{ id: 'codex-turn-1', from: 'codex', text: '', isStreaming: true, startedAt: 0 }] })
+  const posted: { path: string; body: unknown }[] = []
+  // The bridge: it says it listens, and its socket answers every request.
+  on('session.root', async () => ({ value: '/repo' }))
+  on('process.spawn', async function* () {
+    yield { stream: 'stdout' as const, text: `${JSON.stringify({ type: 'listening' })}\n` }
+    return { value: { code: 0, signal: null } }
+  })
+  on('http.fetch', async ($, e) => {
+    posted.push({ path: new URL(e.url).pathname, body: JSON.parse(e.init?.body ?? '{}') })
+    return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ ok: true, found: true }) } }
+  })
+  const ui = await $.ui.mount({ plugin: 'second-opinion', surface: 'desktop', component: 'Pane', requestId: 'agent-room', props: PANE_PROPS })
+  // No buttons in the redrawn tree: they sit in the module, which keeps their handlers.
+  expect(await ui.find({ type: 'Button' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /wants to run `npm run test:e2e`/, in: 'room-controls' })).toBeDefined()
+  expect((await ui.findAll({ type: 'Button', in: 'room-controls' })).map(b => b.props.label)).toEqual([
+    'Allow',
+    'Allow for session',
+    'Always allow npm run test:e2e',
+    'Skip',
+    'Deny',
+    'Interrupt',
+  ])
+  await ui.press({ key: 'codex-q1-allow_once' })
+  expect(await ui.find({ type: 'Text', text: /Allow · telling Codex…/, in: 'room-controls' })).toBeDefined()
+  expect(posted).toContainEqual({ path: '/permission', body: { id: 'codex-q1', optionId: 'allow_once' } })
+  expect(held.value.permissions).toEqual([])
+  expect(held.value.messages.at(-1)).toMatchObject({ from: 'system', text: 'You allowed Codex: run `npm run test:e2e` (Allow)' })
+  await ui.unmount()
+})
+
+test('in the terminal the same question is short buttons that wrap, with a working line', async ($, on) => {
+  holdRoom(on, { permissions: [QUESTION], messages: [{ id: 'codex-turn-1', from: 'codex', text: '', isStreaming: true, startedAt: 0, tools: [{ id: 't', title: 'npm run test:e2e', status: 'in_progress' }] }] })
+  const ui = await $.ui.mount({ plugin: 'second-opinion', surface: 'terminal', component: 'Pane', requestId: 'agent-room', props: PANE_PROPS })
+  expect((await ui.find({ key: 'codex-q1-accept_execpolicy_amendment' }))?.props).toMatchObject({ label: 'Always allow npm run test:e2e' })
+  expect(await ui.find({ key: 'codex-q1-cancel' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Codex working · .* · npm run test:e2e/ })).toBeDefined()
+  expect(await ui.find({ key: 'interrupt' })).toBeDefined()
+  await ui.unmount()
+})
+
+test("the desktop model button opens the picked agent's models and posts a pick", async ($, on) => {
+  const held = holdRoom(on, {
+    status: { codex: 'ready', cursor: 'idle', claude: 'idle' },
+    models: { codex: { model: { current: 'gpt-6.1-sol', values: [{ value: 'gpt-6-luna', name: 'gpt-6-luna' }, { value: 'gpt-6.1-sol', name: 'gpt-6.1-sol' }] }, effort: { current: 'medium', values: [{ value: 'low', name: 'low' }, { value: 'medium', name: 'medium' }] } } },
+  })
+  mock.store(on)
+  const ui = await $.ui.mount({ plugin: 'second-opinion', surface: 'desktop', component: 'Pane', requestId: 'agent-room', props: PANE_PROPS })
+  expect((await ui.find({ key: 'model', in: 'room-composer' }))?.props).toMatchObject({ label: 'gpt-6.1-sol · medium ▾' })
+  await ui.press({ key: 'model' })
+  expect(await ui.find({ key: 'model-gpt-6-luna', in: 'room-composer' })).toBeDefined()
+  await ui.press({ key: 'model-gpt-6-luna' })
+  expect(held.value.prefs).toEqual({ codex: { model: 'gpt-6-luna' } })
+  expect(held.value.messages.at(-1)).toMatchObject({ from: 'system', text: 'Codex now uses model gpt-6-luna.' })
+  expect(await ui.find({ key: 'model-gpt-6-luna', in: 'room-composer' })).toBeUndefined()
+  await ui.unmount()
+})

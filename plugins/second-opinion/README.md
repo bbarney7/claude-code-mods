@@ -34,6 +34,7 @@ Every agent uses its own subscription or login. Nothing here asks for an API key
 | Command | What it does |
 | --- | --- |
 | `/room` | Open the agent room (also `/second-opinion:room`, which the desktop app lists from the start) |
+| `/room model [agent] [model] [effort]` | Show each agent's model, or pick one (`/room model codex gpt-6-luna low`); `/room model codex reset` forgets the pick |
 | `/ask [@codex\|@cursor\|@claude\|@main] <message>` | Say something in the room (opens the pane if needed) |
 | `/second-opinion [codex\|cursor\|both] [focus]` | Review the current changes; results in the *Second opinion* pane |
 | `/delegate <codex\|cursor> <task>` | Have an outside agent implement a task |
@@ -52,7 +53,20 @@ Claude Code ── mod (panes, routing, @mentions) ──spawn── node bridge
 - **Long-lived sessions.** The bridge keeps one adapter process per agent and talks to it over the [Agent Client Protocol](https://agentclientprotocol.com). Follow-ups don't start a new process, agents remember the conversation, and replies stream into the pane along with the tools each agent uses.
 - **Routing happens in code.** A message goes to the agents it `@mentions`. With no mention it goes to whoever you addressed last. Mentions inside backticks or code fences don't count.
 - **Hand-offs.** When an agent's reply `@mentions` another participant, that participant gets a turn. Chains stop at 3 hops, and a bare "thanks" ends one. A reply to whoever asked is just an answer, not a hand-off.
-- **Agents can edit.** By default the room's agents edit files and run commands in the repository: Codex in `workspace-write` mode, Cursor in `agent` mode, the room's Claude in `acceptEdits` mode (Codex and Claude at medium effort). Set **Room: can agents edit files** to `ask` in `/config` and each asks first instead (Cursor then only reads). When an agent asks permission, the request appears in the pane with buttons to answer it. Codex needs `@agentclientprotocol/codex-acp` 2.x for the gpt-6 models.
+- **Permissions follow your session.** The room's agents get the permission mode of the session you opened the room from, and it changes when that mode changes (it's picked up from your next prompt, tool call or turn end):
+
+  | Main session | Codex | Cursor | Room's Claude |
+  | --- | --- | --- | --- |
+  | bypass permissions | `agent-full-access`; the room answers anything it still asks | `agent`; the room answers its questions | `bypassPermissions` |
+  | auto | `agent` (auto review) | `agent` | `auto` |
+  | accept edits | `workspace-write` (asks outside the repo) | `agent` | `acceptEdits` |
+  | default | `read-only` (asks before edits) | `ask` (only reads) | `default` |
+  | plan | `read-only`, told to only plan | `ask` | `plan` |
+
+  The room's header shows the level in use. Set **Room: what agents may do** in `/config` to `allow` (always edit) or `ask` (always ask first) to pin it. When an agent asks, the question appears above the message box with short buttons (Codex's "Yes, and don't ask again for commands that start with `npm test`" becomes **Always allow npm test**); your answer is noted in the room. Codex needs `@agentclientprotocol/codex-acp` 2.x for the gpt-6 models.
+- **Pick each agent's model.** The model button in the message box (desktop) or `/room model` lists the selected agent's models and effort levels, as the agent reports them; the pick is remembered across sessions. Without one, Codex and Claude use their own default model at medium effort.
+- **Short replies.** Agents are asked to answer first and briefly. Their narration between tool calls ("I'll check the tests…") is folded away under the answer, which is also all that `ask_agent` hands back to Claude.
+- **Something is always visibly happening.** While an agent works, a line under the transcript shows a spinner, how long it has been working and what it's running, with **Interrupt**. Pressed buttons change at once (**Stopping…**, **Allow · telling Codex…**). On the desktop these controls are drawn by the mod's own surface modules, so a click is never lost to a redraw while agents stream.
 - **The room's Claude is separate from your main session.** It's its own Claude Code session and loads your plugins. This mod notices when it's running there and stays inactive, so there's no room inside the room.
 
 ## Context settings (`/config`)

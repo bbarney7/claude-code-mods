@@ -8,11 +8,19 @@
 //   node acp-bridge.mjs --socket /tmp/x.sock --cwd /path/to/repo
 //
 // stdout events: {type:'listening'} {type:'status',agent,state,detail?}
-//   {type:'chunk',agent,turn,text} {type:'tool',agent,turn,id,title,status}
+//   {type:'chunk',agent,turn,segment,text} {type:'tool',agent,turn,id,title,status}
 //   {type:'turn_end',agent,turn,stopReason} {type:'turn_error',agent,turn,message}
-//   {type:'permission',agent,id,title,options:[{optionId,name,kind}]} {type:'log',message}
-// HTTP (POST, JSON body): /prompt {agent,turn,text}  /permission {id,optionId|null}
-//   /cancel {agent}  /reset {agent}  /wait {turn,timeoutMs}  GET /health
+//   {type:'permission',agent,id,title,detail?,options:[{optionId,name,kind}]} {type:'permission_closed',id}
+//   {type:'permission_auto',agent,turn,id,title,option} {type:'options',agent,mode,options:[{id,category,current,values}]}
+//   {type:'config_error',agent,message} {type:'log',message}
+// HTTP (POST, JSON body): /prompt {agent,turn,text,settings?}  /configure {agent,settings,start?}
+//   /permission {id,optionId|null}  /cancel {agent}  /reset {agent}  /wait {turn,timeoutMs}  GET /health
+// settings: {mode?, model?, effort?, autoApprove?}: the ACP mode id, the model and effort config
+// values, and whether to answer the agent's permission requests itself (the main session bypasses).
+//
+// A turn's reply arrives as segments: the agent's narration between tool calls ("I'll check the
+// tests…") and its final answer are separate messages. A new message id, or a tool call after some
+// text, starts the next segment, so the room can show the answer and fold the narration away.
 
 import { spawn, execFileSync } from 'node:child_process'
 import { createServer } from 'node:http'
@@ -24,45 +32,43 @@ const args = Object.fromEntries(
 )
 const SOCKET = args.socket
 const CWD = args.cwd || process.cwd()
-// allow: agents edit the repository on their own; ask: they ask first (Cursor's ask mode only reads).
-const EDITS = args.edits === 'ask' ? 'ask' : 'allow'
 if (!SOCKET) {
-  console.error('usage: acp-bridge.mjs --socket <path> [--cwd <dir>] [--edits allow|ask]')
+  console.error('usage: acp-bridge.mjs --socket <path> [--cwd <dir>]')
   process.exit(2)
 }
 
-// Measured adapter facts from Syntaur's ACP spike: codex and claude inherit xhigh effort (25 s
-// to the first token), cursor has no effort option, all three take a chat-safe mode. The room's
-// Claude is a full Claude Code session that loads the user's plugins, this mod included:
+// Measured adapter facts from Syntaur's ACP spike: codex and claude inherit the user's effort
+// (xhigh: 25 s to the first token), so the room asks for medium unless the person picks one;
+// cursor has no effort option. The mode comes from the mod with each prompt. The room's Claude
+// is a full Claude Code session that loads the user's plugins, this mod included:
 // SECOND_OPINION_IN_ROOM tells the mod there to stay out of the way (no room inside the room).
 const HARNESSES = {
   codex: {
     argv: ['codex-acp'],
-    mode: EDITS === 'allow' ? 'workspace-write' : 'read-only',
-    config: { reasoning_effort: 'medium' },
+    effort: 'medium',
     install: 'npm i -g @agentclientprotocol/codex-acp (2.x for the gpt-6 models), then sign in with `codex login`',
   },
   cursor: {
     argv: ['cursor-agent', 'acp'],
-    mode: EDITS === 'allow' ? 'agent' : 'ask',
-    config: {},
     install: 'curl https://cursor.com/install -fsS | bash, then sign in with `cursor-agent login`',
   },
   claude: {
     argv: ['claude-agent-acp'],
-    mode: EDITS === 'allow' ? 'acceptEdits' : 'default',
-    config: { effort: 'medium' },
+    effort: 'medium',
     env: { SECOND_OPINION_IN_ROOM: '1' },
     install: 'npm i -g @agentclientprotocol/claude-agent-acp',
   },
 }
+// The config options the room lets the person pick, by their ACP category.
+const PICKED = { model: 'model', effort: 'thought_level' }
 const PERMISSION_TIMEOUT_MS = 10 * 60 * 1000
 
-// Every turn's reply is also kept here, so /wait can hand it back whole (the mod's tool
-// hook waits on that long-poll: its own clock stops during a $ call, not a bare promise).
+// Every turn's reply is also kept here, so /wait can hand it back (the mod's tool hook waits on
+// that long-poll: its own clock stops during a $ call, not a bare promise). The answer is the
+// last segment; the ones before it are narration.
 const turns = new Map()
 const turnOf = turn => {
-  if (!turns.has(turn)) turns.set(turn, { text: '', done: false, waiters: [] })
+  if (!turns.has(turn)) turns.set(turn, { segments: [], done: false, waiters: [] })
   return turns.get(turn)
 }
 const settleTurn = (turn, fields) => {
@@ -72,7 +78,10 @@ const settleTurn = (turn, fields) => {
 }
 
 const emit = event => {
-  if (event.type === 'chunk') turnOf(event.turn).text += event.text
+  if (event.type === 'chunk') {
+    const { segments } = turnOf(event.turn)
+    segments[event.segment] = (segments[event.segment] ?? '') + event.text
+  }
   if (event.type === 'turn_end') settleTurn(event.turn, { stopReason: event.stopReason })
   if (event.type === 'turn_error') settleTurn(event.turn, { error: event.message })
   process.stdout.write(`${JSON.stringify(event)}\n`)
@@ -92,6 +101,14 @@ class Adapter {
     this.running = null
     this.ready = null
     this.stderr = ''
+    // What the mod asked for, what the agent last confirmed, and its pickable config options.
+    this.want = { effort: this.spec.effort }
+    this.mode = null
+    this.options = []
+    this.autoApprove = false
+    this.segment = { index: 0, hasText: false, messageId: null }
+    // Tool titles by call id: codex asks to "Run command" and names the command only on the call.
+    this.toolTitles = new Map()
   }
 
   start() {
@@ -126,20 +143,75 @@ class Adapter {
       })
       const made = await this.request('session/new', { cwd: CWD, mcpServers: [] })
       this.sessionId = made.sessionId
-      if (this.spec.mode) {
-        await this.request('session/set_mode', { sessionId: this.sessionId, modeId: this.spec.mode }).catch(error =>
-          log(`${this.agent}: set_mode ${this.spec.mode} refused: ${error.message}`),
-        )
-      }
-      for (const [configId, value] of Object.entries(this.spec.config)) {
-        await this.request('session/set_config_option', { sessionId: this.sessionId, configId, value }).catch(error =>
-          log(`${this.agent}: ${configId}=${value} refused: ${error.message}`),
-        )
-      }
+      this.mode = made.modes?.currentModeId ?? null
+      this.options = made.configOptions ?? []
+      await this.apply()
       emit({ type: 'status', agent: this.agent, state: 'ready' })
     })()
     this.ready.catch(error => this.fail(error.message))
     return this.ready
+  }
+
+  // Merges what the mod wants; applied now when the session is idle, else before the next prompt.
+  configure(settings = {}) {
+    for (const key of ['mode', 'model', 'effort']) if (typeof settings[key] === 'string' && settings[key]) this.want[key] = settings[key]
+    if (typeof settings.autoApprove === 'boolean') this.autoApprove = settings.autoApprove
+    if (this.sessionId && !this.running) void this.apply()
+  }
+
+  // One pass at a time; a call during a pass runs another after it, for what changed meanwhile.
+  async apply() {
+    if (this.applying) return this.applying.then(() => this.apply())
+    this.applying = (async () => {
+      let changed = false
+      if (this.want.mode && this.want.mode !== this.mode) {
+        await this.request('session/set_mode', { sessionId: this.sessionId, modeId: this.want.mode })
+          .then(() => {
+            this.mode = this.want.mode
+            changed = true
+          })
+          .catch(error => {
+            this.refused(`mode ${this.want.mode}`, error)
+            delete this.want.mode
+          })
+      }
+      // The model first: another model can offer other effort levels.
+      for (const key of ['model', 'effort']) {
+        const option = this.options.find(o => o.category === PICKED[key])
+        const value = this.want[key]
+        if (!option || !value || option.currentValue === value) continue
+        if (!optionValues(option).some(v => v.value === value)) {
+          this.refused(`${key} ${value}`, new Error(`not offered (${optionValues(option).map(v => v.value).join(', ')})`))
+          delete this.want[key]
+          continue
+        }
+        await this.request('session/set_config_option', { sessionId: this.sessionId, configId: option.id, value })
+          .then(result => {
+            if (Array.isArray(result?.configOptions)) this.options = result.configOptions
+            else option.currentValue = value
+            changed = true
+          })
+          .catch(error => {
+            this.refused(`${key} ${value}`, error)
+            delete this.want[key]
+          })
+      }
+      if (changed || !this.reported) this.report()
+    })().finally(() => (this.applying = null))
+    return this.applying
+  }
+
+  refused(what, error) {
+    log(`${this.agent}: ${what} refused: ${error.message}`)
+    emit({ type: 'config_error', agent: this.agent, message: `${what}: ${error.message}` })
+  }
+
+  report() {
+    this.reported = true
+    const options = this.options
+      .filter(o => Object.values(PICKED).includes(o.category))
+      .map(o => ({ id: o.id, category: o.category, current: o.currentValue, values: optionValues(o) }))
+    emit({ type: 'options', agent: this.agent, mode: this.mode, options })
   }
 
   fail(message) {
@@ -196,16 +268,24 @@ class Adapter {
   onUpdate(update) {
     const turn = this.running?.turn
     if (!turn) return
+    const seg = this.segment
     switch (update.sessionUpdate) {
-      case 'agent_message_chunk':
+      case 'agent_message_chunk': {
         // codex's startup notice arrives without a messageId; real chunks carry one.
         if (this.agent === 'codex' && !update.messageId) return
+        if (update.messageId && seg.messageId && update.messageId !== seg.messageId && seg.hasText) this.nextSegment()
+        if (update.messageId) seg.messageId = update.messageId
         if (update.content?.type === 'text' && update.content.text) {
-          emit({ type: 'chunk', agent: this.agent, turn, text: update.content.text })
+          seg.hasText = true
+          emit({ type: 'chunk', agent: this.agent, turn, segment: seg.index, text: update.content.text })
         }
         return
+      }
       case 'tool_call':
       case 'tool_call_update':
+        // Text before a tool call was narration: what follows starts a new segment.
+        if (update.sessionUpdate === 'tool_call' && seg.hasText) this.nextSegment()
+        if (update.title && update.toolCallId) this.toolTitles.set(update.toolCallId, update.title)
         if (update.title || update.status) {
           emit({
             type: 'tool',
@@ -220,11 +300,19 @@ class Adapter {
     }
   }
 
+  nextSegment() {
+    this.segment = { index: this.segment.index + 1, hasText: false, messageId: null }
+  }
+
   async onRequest(message) {
     const { id, method, params } = message
     if (method === 'session/request_permission') {
-      const permissionId = `${this.agent}-${id}`
-      const answer = await askPermission(permissionId, this.agent, params)
+      const permissionId = `${this.agent}-${this.sessionId?.slice(-6) ?? 's'}-${id}`
+      const call = params?.toolCall ?? {}
+      const command = Array.isArray(call.rawInput?.command) ? call.rawInput.command.join(' ') : call.rawInput?.command
+      const named = this.toolTitles.get(call.toolCallId) ?? command
+      const detail = named && named !== call.title ? String(named).slice(0, 400) : undefined
+      const answer = this.autoApprove ? autoAnswer(this.agent, params, this.running?.turn, detail) : await askPermission(permissionId, this.agent, params, detail)
       const outcome = answer ? { outcome: 'selected', optionId: answer } : { outcome: 'cancelled' }
       return this.send({ id, result: { outcome } })
     }
@@ -241,8 +329,10 @@ class Adapter {
     if (this.running || this.queue.length === 0) return
     this.running = this.queue.shift()
     const { turn, text } = this.running
+    this.segment = { index: 0, hasText: false, messageId: null }
     try {
       await this.start()
+      await this.apply()
       emit({ type: 'status', agent: this.agent, state: 'busy' })
       const result = await this.request('session/prompt', {
         sessionId: this.sessionId,
@@ -252,6 +342,8 @@ class Adapter {
     } catch (error) {
       emit({ type: 'turn_error', agent: this.agent, turn, message: error.message })
     } finally {
+      // A question still open when its turn ended can no longer be answered.
+      closePermissions(this.agent)
       if (this.running?.turn === turn) this.running = null
       if (!this.dead) emit({ type: 'status', agent: this.agent, state: this.queue.length ? 'busy' : 'ready' })
       void this.pump()
@@ -260,6 +352,7 @@ class Adapter {
 
   cancel() {
     this.queue = []
+    closePermissions(this.agent)
     if (this.running && this.sessionId) this.send({ method: 'session/cancel', params: { sessionId: this.sessionId } })
   }
 
@@ -289,23 +382,41 @@ function killGroup(pid) {
 
 const permissions = new Map()
 
-function askPermission(id, agent, params) {
+function askPermission(id, agent, params, detail) {
   return new Promise(resolve => {
     const timer = setTimeout(() => settle(null), PERMISSION_TIMEOUT_MS)
     const settle = optionId => {
       clearTimeout(timer)
-      permissions.delete(id)
+      if (permissions.delete(id) && optionId === null) emit({ type: 'permission_closed', id })
       resolve(optionId)
     }
-    permissions.set(id, settle)
+    permissions.set(id, { agent, settle })
     emit({
       type: 'permission',
       agent,
       id,
       title: params?.toolCall?.title ?? 'Permission requested',
+      ...(detail ? { detail } : {}),
       options: (params?.options ?? []).map(({ optionId, name, kind }) => ({ optionId, name, kind })),
     })
   })
+}
+
+function closePermissions(agent) {
+  for (const [id, one] of permissions) if (one.agent === agent) one.settle(null)
+}
+
+// With the main session bypassing permissions the room does too: the first allow, once if offered.
+function autoAnswer(agent, params, turn, detail) {
+  const options = params?.options ?? []
+  const pick = options.find(o => o.kind === 'allow_once') ?? options.find(o => o.kind === 'allow_always')
+  emit({ type: 'permission_auto', agent, turn, id: params?.toolCall?.toolCallId, title: detail ?? params?.toolCall?.title ?? 'a request', option: pick?.name ?? 'none offered' })
+  return pick?.optionId ?? null
+}
+
+// A select option's values, flattened from groups when the agent groups them.
+function optionValues(option) {
+  return (option.options ?? []).flatMap(v => (Array.isArray(v.options) ? v.options : [v])).map(v => ({ value: v.value, name: v.name ?? v.value }))
 }
 
 // ---------- adapters by agent, the HTTP surface, and teardown ----------
@@ -341,11 +452,27 @@ const server = createServer(async (request, response) => {
     }
     const body = await readBody(request)
     switch (request.url) {
-      case '/prompt':
-        adapterFor(body.agent).prompt(body.turn, body.text)
+      case '/prompt': {
+        const adapter = adapterFor(body.agent)
+        if (body.settings) adapter.configure(body.settings)
+        adapter.prompt(body.turn, body.text)
         return reply(202, { ok: true })
+      }
+      case '/configure': {
+        // start: bring the agent up just to learn its models, for the room's model picker.
+        const adapter = adapterFor(body.agent)
+        adapter.configure(body.settings ?? {})
+        if (body.start) {
+          void adapter
+            .start()
+            .then(() => adapter.reported || adapter.report())
+            .catch(() => undefined)
+        }
+        return reply(200, { ok: true })
+      }
       case '/wait': {
-        // Long-poll: answer when the turn ends, or after timeoutMs with done:false.
+        // Long-poll: answer when the turn ends, or after timeoutMs with done:false. The answer is
+        // the last segment that has text; the rest was narration.
         const one = turnOf(body.turn)
         if (!one.done) {
           await new Promise(wake => {
@@ -356,12 +483,15 @@ const server = createServer(async (request, response) => {
             })
           })
         }
-        const { text, done, stopReason, error } = one
-        return reply(200, { ok: true, done, text, stopReason, error })
+        const said = one.segments.filter(part => part?.trim())
+        const { done, stopReason, error } = one
+        return reply(200, { ok: true, done, text: said.at(-1) ?? '', notes: said.length - 1, stopReason, error })
       }
-      case '/permission':
-        permissions.get(body.id)?.(body.optionId ?? null)
-        return reply(200, { ok: true })
+      case '/permission': {
+        const one = permissions.get(body.id)
+        one?.settle(body.optionId ?? null)
+        return reply(200, { ok: true, found: Boolean(one) })
+      }
       case '/cancel':
         adapters.get(body.agent)?.cancel()
         return reply(200, { ok: true })

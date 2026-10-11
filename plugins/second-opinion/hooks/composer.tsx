@@ -4,12 +4,26 @@ import type { ClientKeyEvent, ClientModule } from 'claude-code'
 // own text field keeps a fixed width, so this one is drawn and edited here, full width.
 // Click it to type; Enter sends, Shift+Enter starts a new line, Escape leaves it.
 // Typing @ opens a list of who can be mentioned: arrows pick, Tab or Enter completes.
+// The model button beside the agents opens the picked agent's models and effort levels.
 
 export type ComposerChip = { id: string; label: string; selected: boolean }
 export type ComposerMention = { id: string; label: string; hint: string; color: string }
-export type ComposerProps = { placeholder: string; color: string; chips: ComposerChip[]; mentions: ComposerMention[] }
+export type ComposerChoice = { value: string; name: string }
+// The picked agent's model: what it uses now and what it offers (empty until its session started).
+export type ComposerModel = {
+  agent: string
+  label: string
+  isLoading: boolean
+  hasFailed: boolean
+  models: ComposerChoice[]
+  efforts: ComposerChoice[]
+  model: string
+  effort: string
+}
+export type ComposerProps = { placeholder: string; color: string; chips: ComposerChip[]; mentions: ComposerMention[]; model?: ComposerModel }
 // closedAt: where the @ sits whose list Escape closed, so it stays closed while that word is typed.
-export type ComposerState = { text: string; cursor: number; focused: boolean; pick: number; closedAt?: number }
+// menu: the model picker is open.
+export type ComposerState = { text: string; cursor: number; focused: boolean; pick: number; closedAt?: number; menu?: boolean }
 
 const EMPTY: ComposerState = { text: '', cursor: 0, focused: false, pick: 0 }
 
@@ -77,18 +91,31 @@ const Composer: ClientModule<ComposerProps, ComposerState> = (props, surface) =>
       if (event.type !== 'down') return
       const now = surface.state ?? EMPTY
       // The list's rows sit just under the box's top border: a click on one completes it.
-      const list = openMentions(now, latest.mentions)
+      const list = now.menu ? [] : openMentions(now, latest.mentions)
       const row = list[event.y - 1]
       surface.setState(row ? complete({ ...now, focused: true }, row.id) : { ...now, focused: true })
     })
     surface.onKey(key => {
-      const result = edit(surface.state ?? { ...EMPTY, focused: true }, key, latest.mentions)
+      // Typing closes the model picker, so the mention list has the box's top rows to itself.
+      const result = edit({ ...(surface.state ?? { ...EMPTY, focused: true }), menu: false }, key, latest.mentions)
       if (result.send) surface.post({ type: 'send', text: result.send })
       surface.setState(result.state)
     })
   }
   const state = surface.state ?? EMPTY
-  const list = state.focused ? openMentions(state, props.mentions) : []
+  const list = state.focused && !state.menu ? openMentions(state, props.mentions) : []
+  const model = props.model
+  const toggleMenu = () => {
+    const now = surface.state ?? EMPTY
+    // An agent lists its models once its session is up: ask for that when the picker opens empty.
+    if (!now.menu && model && model.models.length === 0) surface.post({ type: 'models', agent: model.agent })
+    surface.setState({ ...now, menu: !now.menu })
+  }
+  const pickModel = (type: 'model' | 'effort', value: string) => () => {
+    if (!model) return
+    surface.post({ type, agent: model.agent, value })
+    surface.setState({ ...(surface.state ?? EMPTY), menu: false })
+  }
   const pick = Math.min(state.pick, Math.max(0, list.length - 1))
   const shown = state.focused ? `${state.text.slice(0, state.cursor)}▏${state.text.slice(state.cursor)}` : state.text
   const send = () => {
@@ -107,20 +134,60 @@ const Composer: ClientModule<ComposerProps, ComposerState> = (props, surface) =>
             <Text dimColor>{mention.hint}</Text>
           </Box>
         ))}
+        {state.menu && model ? (
+          <Box flexDirection="column" width="100%" marginBottom={1}>
+            {model.models.length === 0 ? (
+              <Text dimColor>
+                {model.hasFailed ? 'No models listed: the agent did not start (see the room).' : 'Starting the agent to list its models…'}
+              </Text>
+            ) : (
+              <Box flexDirection="column" width="100%">
+                <Box width="100%" gap={1} flexWrap="wrap" alignItems="center">
+                  <Text dimColor>Model</Text>
+                  {model.models.map(choice => (
+                    <Button
+                      key={`model-${choice.value}`}
+                      label={choice.name}
+                      variant={choice.value === model.model ? 'primary' : 'secondary'}
+                      dimColor={choice.value !== model.model}
+                      onPress={pickModel('model', choice.value)}
+                    />
+                  ))}
+                </Box>
+                {model.efforts.length > 0 ? (
+                  <Box width="100%" gap={1} flexWrap="wrap" alignItems="center">
+                    <Text dimColor>Effort</Text>
+                    {model.efforts.map(choice => (
+                      <Button
+                        key={`effort-${choice.value}`}
+                        label={choice.name}
+                        variant={choice.value === model.effort ? 'primary' : 'secondary'}
+                        dimColor={choice.value !== model.effort}
+                        onPress={pickModel('effort', choice.value)}
+                      />
+                    ))}
+                  </Box>
+                ) : null}
+              </Box>
+            )}
+          </Box>
+        ) : null}
         <Box minHeight={2} width="100%" marginTop={list.length ? 1 : 0}>
           {state.text || state.focused ? <Text>{shown}</Text> : <Text dimColor>{props.placeholder}</Text>}
         </Box>
-        <Box width="100%" justifyContent="space-between" alignItems="center">
-          <Box gap={1} alignItems="center">
+        <Box width="100%" justifyContent="space-between" alignItems="center" flexWrap="wrap">
+          <Box gap={1} alignItems="center" flexWrap="wrap">
             {props.chips.map(chip => (
               <Button
                 key={`to-${chip.id}`}
                 label={chip.label}
                 variant={chip.selected ? 'primary' : 'secondary'}
                 dimColor={!chip.selected}
-                onPress={() => surface.post({ type: 'to', agent: chip.id })}
+                // With the picker open, the newly picked agent's models are wanted too.
+                onPress={() => surface.post({ type: 'to', agent: chip.id, ...(state.menu ? { models: true } : {}) })}
               />
             ))}
+            {model ? <Button key="model" label={`${model.label} ${state.menu ? '▴' : '▾'}`} variant="secondary" dimColor={!state.menu} onPress={toggleMenu} /> : null}
           </Box>
           <Button key="send" label="Send ↵" variant="primary" onPress={send} />
         </Box>
