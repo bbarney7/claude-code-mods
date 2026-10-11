@@ -125,7 +125,7 @@ test('the first prompt of a session introduces the room; later ones do not', asy
 
 test('the review pane starts empty with a hint', async $ => {
   for (const surface of ['terminal', 'desktop'] as const) {
-    const ui = await $.ui.mount({ plugin: 'second-opinion', surface, component: 'Pane', requestId: 'second-opinion', props: PANE_PROPS })
+    const ui = await $.ui.mount({ plugin: 'room', surface, component: 'Pane', requestId: 'second-opinion', props: PANE_PROPS })
     expect(await ui.find({ type: 'Text', text: /No runs yet/ })).toBeDefined()
     expect(await ui.find({ key: 'send-reviews' })).toBeUndefined()
     await ui.unmount()
@@ -134,7 +134,7 @@ test('the review pane starts empty with a hint', async $ => {
 
 test('the agent room: its own full-width message box on the desktop, the text field elsewhere, /ask on mobile', async ($, on) => {
   mock.clock(on)
-  const desktop = await $.ui.mount({ plugin: 'second-opinion', surface: 'desktop', component: 'Pane', requestId: 'agent-room', props: PANE_PROPS })
+  const desktop = await $.ui.mount({ plugin: 'room', surface: 'desktop', component: 'Pane', requestId: 'agent-room', props: PANE_PROPS })
   expect(await desktop.find({ type: 'Text', text: 'Type @ to pick who answers' })).toBeDefined()
   expect(await desktop.find({ key: 'room-composer' })).toBeDefined()
   // Click, type, and the box shows the text with its caret; picking a chip changes who answers.
@@ -149,13 +149,13 @@ test('the agent room: its own full-width message box on the desktop, the text fi
   await desktop.post({ type: 'to', agent: 'cursor' }, { in: 'room-composer' })
   await desktop.unmount()
 
-  const terminal = await $.ui.mount({ plugin: 'second-opinion', surface: 'terminal', component: 'Pane', requestId: 'agent-room', props: PANE_PROPS })
+  const terminal = await $.ui.mount({ plugin: 'room', surface: 'terminal', component: 'Pane', requestId: 'agent-room', props: PANE_PROPS })
   expect((await terminal.find({ key: 'room-0' }))?.props).toMatchObject({ placeholder: 'Message Cursor…' })
   await terminal.press({ key: 'to-codex' })
   expect((await terminal.find({ key: 'room-0' }))?.props).toMatchObject({ placeholder: 'Message Codex…' })
   await terminal.unmount()
 
-  const phone = await $.ui.mount({ plugin: 'second-opinion', surface: 'mobile', component: 'Pane', requestId: 'agent-room', props: PANE_PROPS })
+  const phone = await $.ui.mount({ plugin: 'room', surface: 'mobile', component: 'Pane', requestId: 'agent-room', props: PANE_PROPS })
   expect(await phone.find({ type: 'Text', text: /Send with \/ask @codex/ })).toBeDefined()
   await phone.unmount()
 })
@@ -200,7 +200,7 @@ test('typing @ opens the mention list; arrows pick, Tab or Enter completes, Esca
 
 test('the room header shows each agent with a status dot', async ($, on) => {
   mock.clock(on)
-  const ui = await $.ui.mount({ plugin: 'second-opinion', surface: 'desktop', component: 'Pane', requestId: 'agent-room', props: PANE_PROPS })
+  const ui = await $.ui.mount({ plugin: 'room', surface: 'desktop', component: 'Pane', requestId: 'agent-room', props: PANE_PROPS })
   for (const name of ['Codex', 'Cursor', 'Claude']) expect(await ui.find({ type: 'Text', text: name })).toBeDefined()
   expect(isLive('ready')).toBe(true)
   expect(isLive('busy')).toBe(true)
@@ -298,7 +298,7 @@ test('the first prompt tells a room agent who @main and @claude are', async () =
 
 
 for (const [label, variables, expected] of [
-  ['inside the room\'s own Claude', { SECOND_OPINION_IN_ROOM: '1' }, false],
+  ['inside the room\'s own Claude', { ROOM_MOD_IN_ROOM: '1' }, false],
   ['in a normal session', {}, true],
 ] as const) {
   test(`${label} the mod ${expected ? 'registers' : 'does not register'} /room`, async ($, on) => {
@@ -416,8 +416,8 @@ function holdRoom(on: On, seed: Partial<Room>) {
     value: { messages: [], status: { codex: 'busy', cursor: 'idle', claude: 'idle' }, detail: '', permissions: [], defaultAgent: 'codex', access: 'ask', models: {}, prefs: {}, ...seed } as Room,
     version: 1,
   }
-  on('state.get', { plugin: 'second-opinion', key: 'room' }, async () => ({ value: { value: held.value, version: held.version } }))
-  on('state.set', { plugin: 'second-opinion', key: 'room' }, async ($, e) => {
+  on('state.get', { plugin: 'room', key: 'room' }, async () => ({ value: { value: held.value, version: held.version } }))
+  on('state.set', { plugin: 'room', key: 'room' }, async ($, e) => {
     if (e.ifVersion !== undefined && e.ifVersion !== held.version) return { value: { isSet: false as const, version: held.version } }
     held.value = e.value as Room
     held.version += 1
@@ -441,7 +441,7 @@ test('on the desktop a question is answered from the controls module, which says
     posted.push({ path: new URL(e.url).pathname, body: JSON.parse(e.init?.body ?? '{}') })
     return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ ok: true, found: true }) } }
   })
-  const ui = await $.ui.mount({ plugin: 'second-opinion', surface: 'desktop', component: 'Pane', requestId: 'agent-room', props: PANE_PROPS })
+  const ui = await $.ui.mount({ plugin: 'room', surface: 'desktop', component: 'Pane', requestId: 'agent-room', props: PANE_PROPS })
   // No buttons in the redrawn tree: they sit in the module, which keeps their handlers.
   expect(await ui.find({ type: 'Button' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /wants to run `npm run test:e2e`/, in: 'room-controls' })).toBeDefined()
@@ -463,7 +463,7 @@ test('on the desktop a question is answered from the controls module, which says
 
 test('in the terminal the same question is short buttons that wrap, with a working line', async ($, on) => {
   holdRoom(on, { permissions: [QUESTION], messages: [{ id: 'codex-turn-1', from: 'codex', text: '', isStreaming: true, startedAt: 0, tools: [{ id: 't', title: 'npm run test:e2e', status: 'in_progress' }] }] })
-  const ui = await $.ui.mount({ plugin: 'second-opinion', surface: 'terminal', component: 'Pane', requestId: 'agent-room', props: PANE_PROPS })
+  const ui = await $.ui.mount({ plugin: 'room', surface: 'terminal', component: 'Pane', requestId: 'agent-room', props: PANE_PROPS })
   expect((await ui.find({ key: 'codex-q1-accept_execpolicy_amendment' }))?.props).toMatchObject({ label: 'Always allow npm run test:e2e' })
   expect(await ui.find({ key: 'codex-q1-cancel' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /Codex working · .* · npm run test:e2e/ })).toBeDefined()
@@ -477,7 +477,7 @@ test("the desktop model button opens the picked agent's models and posts a pick"
     models: { codex: { model: { current: 'gpt-6.1-sol', values: [{ value: 'gpt-6-luna', name: 'gpt-6-luna' }, { value: 'gpt-6.1-sol', name: 'gpt-6.1-sol' }] }, effort: { current: 'medium', values: [{ value: 'low', name: 'low' }, { value: 'medium', name: 'medium' }] } } },
   })
   mock.store(on)
-  const ui = await $.ui.mount({ plugin: 'second-opinion', surface: 'desktop', component: 'Pane', requestId: 'agent-room', props: PANE_PROPS })
+  const ui = await $.ui.mount({ plugin: 'room', surface: 'desktop', component: 'Pane', requestId: 'agent-room', props: PANE_PROPS })
   expect((await ui.find({ key: 'model', in: 'room-composer' }))?.props).toMatchObject({ label: 'gpt-6.1-sol · medium ▾' })
   await ui.press({ key: 'model' })
   expect(await ui.find({ key: 'model-gpt-6-luna', in: 'room-composer' })).toBeDefined()

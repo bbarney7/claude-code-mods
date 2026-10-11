@@ -1,4 +1,4 @@
-# second-opinion
+# room
 
 Bring OpenAI Codex, Cursor and a second Claude into Claude Code.
 
@@ -10,7 +10,7 @@ Bring OpenAI Codex, Cursor and a second Claude into Claude Code.
 ## Install
 
 ```
-/plugin install second-opinion --marketplace bbarney7/claude-code-mods
+/plugin install room --marketplace bbarney7/claude-code-mods
 ```
 
 The install may say "4 userConfig options not yet set". That's fine: the defaults apply, and you can change them any time in `/config` (see [Context settings](#context-settings-config)).
@@ -33,7 +33,7 @@ Every agent uses its own subscription or login. Nothing here asks for an API key
 
 | Command | What it does |
 | --- | --- |
-| `/room` | Open the agent room (also `/second-opinion:room`, which the desktop app lists from the start) |
+| `/room` | Open the agent room (also `/room:room`, which the desktop app lists from the start) |
 | `/room model [agent] [model] [effort]` | Show each agent's model, or pick one (`/room model codex gpt-6-luna low`); `/room model codex reset` forgets the pick |
 | `/ask [@codex\|@cursor\|@claude\|@main] <message>` | Say something in the room (opens the pane if needed) |
 | `/second-opinion [codex\|cursor\|both] [focus]` | Review the current changes; results in the *Second opinion* pane |
@@ -91,9 +91,9 @@ How much crosses between your main session and the room:
 ## Development
 
 ```
-claude --plugin-dir plugins/second-opinion
-claude plugin validate plugins/second-opinion
-claude plugin test plugins/second-opinion
+claude --plugin-dir plugins/room
+claude plugin validate plugins/room
+claude plugin test plugins/room
 ```
 
 To test the bridge on its own: `node bridge/acp-bridge.mjs --socket /tmp/x.sock --cwd <repo>`, then `curl --unix-socket /tmp/x.sock -X POST http://b/prompt -d '{"agent":"cursor","turn":"t1","text":"hi"}'`. Events print to stdout. See the header of `bridge/acp-bridge.mjs` for the protocol.

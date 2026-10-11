@@ -11,9 +11,9 @@ const HOP_BUDGET = 3
 const HISTORY_ITEMS = 12
 const HISTORY_CHARS = 8_000
 
-const runs = atom({ plugin: 'second-opinion', key: 'runs' } as const, [])
-const now = atom({ plugin: 'second-opinion', key: 'now' } as const, 0)
-const room = atom({ plugin: 'second-opinion', key: 'room' } as const, {
+const runs = atom({ plugin: 'room', key: 'runs' } as const, [])
+const now = atom({ plugin: 'room', key: 'now' } as const, 0)
+const room = atom({ plugin: 'room', key: 'room' } as const, {
   messages: [],
   status: { codex: 'idle', cursor: 'idle', claude: 'idle' },
   detail: '',
@@ -468,7 +468,7 @@ async function ensureBridge($: EngineInterface): Promise<string | undefined> {
   if (!bridge) {
     let markReady: (ok: boolean) => void = () => {}
     const ready = new Promise<boolean>(resolve => (markReady = resolve))
-    const socket = `/tmp/second-opinion-${crypto.randomUUID().slice(0, 8)}.sock`
+    const socket = `/tmp/room-${crypto.randomUUID().slice(0, 8)}.sock`
     bridge = { socket, ready, markReady }
     cwd = await $.session.root()
     bridgeError = ''
@@ -498,7 +498,7 @@ async function readBridge($: EngineInterface, socket: string) {
         try {
           await onBridgeEvent($, JSON.parse(line))
         } catch (error) {
-          $.ui.log(`second-opinion: bad bridge line: ${String(error)}`, { to: 'debug' })
+          $.ui.log(`room: bad bridge line: ${String(error)}`, { to: 'debug' })
         }
       }
     }
@@ -626,7 +626,7 @@ async function onBridgeEvent($: EngineInterface, event: BridgeEvent) {
       return
     }
     case 'log':
-      $.ui.log(`second-opinion bridge: ${event.message}`, { to: 'debug' })
+      $.ui.log(`room bridge: ${event.message}`, { to: 'debug' })
   }
 }
 
@@ -1168,7 +1168,7 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     // Inside the room's own Claude (a Claude Code session the bridge started), stay out of the way:
     // no commands, no tools, so it cannot open a room inside the room.
-    if (await $.env.get('SECOND_OPINION_IN_ROOM')) return next(e)
+    if (await $.env.get('ROOM_MOD_IN_ROOM')) return next(e)
     // The room starts from the settings' default mode until the session says which it is in.
     const settings = await $.settings.read().catch(() => ({}) as Record<string, unknown>)
     const defaultMode = (settings.permissions as { defaultMode?: unknown } | undefined)?.defaultMode
@@ -1178,7 +1178,7 @@ export const register: Register = (on, options) => {
     // Each registration stands alone: one the engine refuses (a built-in's name) must not take the rest down.
     const registered = await Promise.allSettled([
       $.command.register({
-        name: 'second-opinion',
+        name: 'room',
         description: 'Have Codex and/or Cursor review the current changes',
         argumentHint: '[codex|cursor|both] [focus]',
       }),
@@ -1229,12 +1229,12 @@ export const register: Register = (on, options) => {
       }),
     ])
     for (const one of registered) {
-      if (one.status === 'rejected') $.ui.toast(`second-opinion: ${String(one.reason)}`)
+      if (one.status === 'rejected') $.ui.toast(`room: ${String(one.reason)}`)
     }
     return next(e)
   })
 
-  on('command.run', { command: ['second-opinion', 'second-opinion:second-opinion'] }, async ($, e) => {
+  on('command.run', { command: ['second-opinion', 'room:second-opinion'] }, async ($, e) => {
     const { agents, focus } = parseReview(e.args)
     const { diff, what } = await changesToReview($)
     if (!diff) return { text: 'Nothing to review: no uncommitted changes and no commits. To just talk to them, try /room.' }
@@ -1244,7 +1244,7 @@ export const register: Register = (on, options) => {
     return { text: `${agents.map(a => LABEL[a]).join(' and ')} reviewing ${what}. Results land in the Second opinion pane.` }
   })
 
-  on('command.run', { command: ['delegate', 'second-opinion:delegate'] }, async ($, e) => {
+  on('command.run', { command: ['delegate', 'room:delegate'] }, async ($, e) => {
     const parsed = parseDelegate(e.args)
     if ('error' in parsed) return { text: parsed.error }
 
@@ -1253,13 +1253,13 @@ export const register: Register = (on, options) => {
     return { text: `${LABEL[parsed.agent]} is implementing: ${parsed.task}` }
   })
 
-  on('command.run', { command: ['opinions', 'second-opinion:opinions'] }, async $ => {
+  on('command.run', { command: ['opinions', 'room:opinions'] }, async $ => {
     await $.ui.open({ id: PANE, title: 'Second opinion' })
     return { text: 'Second opinion pane opened.' }
   })
 
-  // `/second-opinion:room` is the same command, declared in commands/ so a host lists it from the start.
-  on('command.run', { command: ['room', 'second-opinion:room'] }, async ($, e) => {
+  // `/room:room` is the same command, declared in commands/ so a host lists it from the start.
+  on('command.run', { command: ['room', 'room:room'] }, async ($, e) => {
     const words = e.args.trim().split(/\s+/).filter(Boolean)
     if (words[0]?.toLowerCase() === 'model') return { text: await modelCommand($, words.slice(1)) }
     await $.ui.open({ id: ROOM_PANE, title: 'Agent room', focus: true })
@@ -1317,7 +1317,7 @@ export const register: Register = (on, options) => {
     return {}
   })
 
-  on('command.run', { command: ['ask', 'second-opinion:ask'] }, async ($, e) => {
+  on('command.run', { command: ['ask', 'room:ask'] }, async ($, e) => {
     await $.ui.open({ id: ROOM_PANE, title: 'Agent room', focus: true })
     const text = normalizeAsk(e.args)
     if (!text) return { text: 'Agent room opened.' }
@@ -1325,7 +1325,7 @@ export const register: Register = (on, options) => {
     return { text: turns.length ? 'Sent to the agent room.' : 'Sent to the main session.' }
   })
 
-  on('tool.call', { tool: 'mcp__second-opinion__ask_agent' }, async ($, e) => {
+  on('tool.call', { tool: 'mcp__room__ask_agent' }, async ($, e) => {
     const input = e as unknown as { agent: Agent; message: string }
     if (!AGENTS.includes(input.agent)) return { deny: `agent must be one of ${AGENTS.join(', ')}` }
     if (!input.message?.trim()) return { deny: 'message is required' }
@@ -1338,7 +1338,7 @@ export const register: Register = (on, options) => {
     return { result: `${LABEL[input.agent]} replied:\n\n${reply.text}` }
   }).catch(($, e, next) => ({ deny: `ask_agent failed (${next.error.kind}): ${next.error.message ?? 'no message'}` }))
 
-  on('tool.call', { tool: 'mcp__second-opinion__delegate_task' }, async ($, e) => {
+  on('tool.call', { tool: 'mcp__room__delegate_task' }, async ($, e) => {
     const input = e as unknown as { agent: External; task: string }
     if (!EXTERNAL.includes(input.agent)) return { deny: `agent must be one of ${EXTERNAL.join(', ')}` }
     if (!input.task?.trim()) return { deny: 'task is required' }

@@ -1,11 +1,11 @@
 {
-  "name": "second-opinion",
-  "version": "0.6.0",
+  "name": "room",
+  "version": "0.7.0",
   "description": "Codex, Cursor and a second Claude inside Claude Code: an agent room (one chat, @mentions, handoffs) plus one-shot reviews and delegation",
   "author": {
     "name": "Brennen Barney"
   },
-  "homepage": "https://github.com/bbarney7/claude-code-mods/tree/main/plugins/second-opinion",
+  "homepage": "https://github.com/bbarney7/claude-code-mods/tree/main/plugins/room",
   "repository": "https://github.com/bbarney7/claude-code-mods",
   "license": "MIT",
   "keywords": [

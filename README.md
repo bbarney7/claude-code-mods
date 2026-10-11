@@ -4,7 +4,7 @@ Mods for [Claude Code](https://claude.com/claude-code): plugins of function hook
 
 | Mod | What it does |
 | --- | --- |
-| [second-opinion](plugins/second-opinion) | An **agent room**: one chat with OpenAI Codex, Cursor and a second Claude, with `@mentions` and agent-to-agent hand-offs. Also one-shot `/second-opinion` reviews of your diff and `/delegate` implementations. |
+| [room](plugins/room) | An **agent room**: one chat with OpenAI Codex, Cursor and a second Claude, with `@mentions` and agent-to-agent hand-offs. Also one-shot `/second-opinion` reviews of your diff and `/delegate` implementations. |
 | [mod-firewall](plugins/mod-firewall) | A firewall for mods. Every network request, program, secrets-file read and secret env var another mod touches goes through it: ask, block or log. It also catches a mod trying to send your `.env` values or API keys anywhere. |
 | [switchboard](plugins/switchboard) | See and message your other Claude Code sessions: who's working on what, `/dm`, `/broadcast`, `/handoff`, an inbox that holds incoming messages for approval, and warnings when another session edited the same file. |
 | [cache-keeper](plugins/cache-keeper) | Keeps an idle session's prompt cache warm while you're away, so coming back doesn't re-write the whole conversation. You choose for how long, and whether it then lets the cache expire, compacts, or clears with a handoff. A big conversation that went cold anyway gets its next message stopped once, with the price of re-writing it. |
@@ -14,16 +14,16 @@ Mods for [Claude Code](https://claude.com/claude-code): plugins of function hook
 In a Claude Code terminal session:
 
 ```
-/plugin install second-opinion --marketplace bbarney7/claude-code-mods
+/plugin install room --marketplace bbarney7/claude-code-mods
 ```
 
 Answer `y` to add the marketplace, pick a scope (user is the usual choice), and the mod is active in that session. Sessions started afterwards load it too, including the desktop app's Code tab.
 
 While this repository is private, installing needs a GitHub login with access to it (Claude Code clones it with your git credentials).
 
-Each mod's README lists what else it needs. `second-opinion`, for example, uses the Codex, Cursor and Claude ACP adapters.
+Each mod's README lists what else it needs. `room`, for example, uses the Codex, Cursor and Claude ACP adapters.
 
-**In the desktop app's empty chat**, mod commands only appear in their long form, such as `/switchboard:switchboard` or `/second-opinion:room`. A mod adds its short commands (`/switchboard`, `/room`) when a session starts, and an empty chat has no session yet. Once a chat is running, both forms work.
+**In the desktop app's empty chat**, mod commands only appear in their long form, such as `/switchboard:switchboard` or `/room:room`. A mod adds its short commands (`/switchboard`, `/room`) when a session starts, and an empty chat has no session yet. Once a chat is running, both forms work.
 
 ## Before you install any mod
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// ACP bridge for the second-opinion mod: the mod cannot hold a child's stdin open, so this
+// ACP bridge for the room mod: the mod cannot hold a child's stdin open, so this
 // process does. It keeps one long-lived ACP adapter per agent (codex-acp, cursor-agent acp),
 // takes commands over HTTP on a Unix socket, and reports everything as ndjson on stdout,
 // which the mod reads through $.process.spawn. Same shape as Syntaur's chat broker, minus
@@ -41,7 +41,7 @@ if (!SOCKET) {
 // (xhigh: 25 s to the first token), so the room asks for medium unless the person picks one;
 // cursor has no effort option. The mode comes from the mod with each prompt. The room's Claude
 // is a full Claude Code session that loads the user's plugins, this mod included:
-// SECOND_OPINION_IN_ROOM tells the mod there to stay out of the way (no room inside the room).
+// ROOM_MOD_IN_ROOM tells the mod there to stay out of the way (no room inside the room).
 const HARNESSES = {
   codex: {
     argv: ['codex-acp'],
@@ -55,7 +55,7 @@ const HARNESSES = {
   claude: {
     argv: ['claude-agent-acp'],
     effort: 'medium',
-    env: { SECOND_OPINION_IN_ROOM: '1' },
+    env: { ROOM_MOD_IN_ROOM: '1' },
     install: 'npm i -g @agentclientprotocol/claude-agent-acp',
   },
 }
@@ -139,7 +139,7 @@ class Adapter {
       await this.request('initialize', {
         protocolVersion: 1,
         clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
-        clientInfo: { name: 'second-opinion', version: '0.2.0' },
+        clientInfo: { name: 'room', version: '0.2.0' },
       })
       const made = await this.request('session/new', { cwd: CWD, mcpServers: [] })
       this.sessionId = made.sessionId
@@ -317,7 +317,7 @@ class Adapter {
       return this.send({ id, result: { outcome } })
     }
     if (method === 'cursor/create_plan') return this.send({ id, result: { outcome: { outcome: 'accepted' } } })
-    this.send({ id, error: { code: -32601, message: `second-opinion bridge does not handle ${method}` } })
+    this.send({ id, error: { code: -32601, message: `room bridge does not handle ${method}` } })
   }
 
   prompt(turn, text) {

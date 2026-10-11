@@ -60,6 +60,6 @@ export type Room = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'second-opinion': { runs: Run[]; now: number; room: Room }
+    'room': { runs: Run[]; now: number; room: Room }
   }
 }
