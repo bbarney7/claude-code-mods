@@ -1178,7 +1178,7 @@ export const register: Register = (on, options) => {
     // Each registration stands alone: one the engine refuses (a built-in's name) must not take the rest down.
     const registered = await Promise.allSettled([
       $.command.register({
-        name: 'room',
+        name: 'second-opinion',
         description: 'Have Codex and/or Cursor review the current changes',
         argumentHint: '[codex|cursor|both] [focus]',
       }),
