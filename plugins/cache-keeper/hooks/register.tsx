@@ -1,4 +1,4 @@
-import type { EngineInterface, ModelUsage, Register } from 'claude-code'
+import type { EngineInterface, ModelUsage, Register, RenderInput } from 'claude-code'
 
 const TICK_MS = 60_000
 const HOUR = 60 * 60_000
@@ -189,7 +189,7 @@ export function duration(ms: number): string {
 export type Outcome = 'expired' | 'let-expire' | 'compacted' | 'handed-off'
 
 export function statusText(s: Clock, cfg: Config, now: number, keeps: number, outcome?: Outcome): string | undefined {
-  if (outcome === 'compacted') return 'cache: compacted before expiry'
+  if (outcome === 'compacted') return 'cache: compacted'
   if (outcome === 'handed-off') return 'cache: cleared with a handoff'
   if (s.lastWarmAt === undefined) return undefined
   const left = s.lastWarmAt + cfg.cacheTtlMinutes * 60_000 - now
@@ -210,7 +210,7 @@ export function rowParts(
   now: number,
   info: { keeps: number; lastPing?: { read: number; usd?: number }; context: number; price?: Price; outcome?: Outcome },
 ): { state: RowState; text: string } | undefined {
-  if (info.outcome === 'compacted') return { state: 'unknown', text: 'compacted before expiry' }
+  if (info.outcome === 'compacted') return { state: 'unknown', text: `compacted · the next message caches the summary${info.context ? ` (${tokens(info.context)})` : ''}` }
   if (info.outcome === 'handed-off') return { state: 'unknown', text: 'cleared with a handoff' }
   if (s.lastWarmAt === undefined) return undefined
   if (isCold(s, cfg, now) || info.outcome === 'expired') {
@@ -245,6 +245,15 @@ let coldWrites: ColdWrite[] = []
 // The lastWarmAt the guard already refused a send for; a send under the same clock goes through.
 let ackedAt: number | undefined
 let coldWritePending = false
+// The message the guard refused, held above the prompt with its choices until one is picked or
+// another message goes through. doing: the choice running (a compaction takes a minute or two);
+// note: why the last choice failed.
+type Held = { text: string; canResend: boolean; doing?: string; note?: string }
+let held: Held | undefined
+let compactions = 0
+// The settings pane: a keep-warm it started is running; what the last one said.
+let pinging = false
+let paneNote: string | undefined
 
 function effective(): Config {
   return { ...config, ...overrides }
@@ -254,15 +263,11 @@ function price(): Price | undefined {
   return priceOf(model, effective().cacheTtlMinutes)
 }
 
-// Redraw the row, or the status line where the row is off.
+// Redraw the row (or the status line where the row is off) and the settings pane.
 async function refresh($: EngineInterface) {
   const cfg = effective()
-  if (cfg.showRow) {
-    $.ui.status(undefined)
-    $.ui.invalidate('ui.render')
-  } else {
-    $.ui.status(statusText(clock, cfg, await $.clock.now(), keeps.length, outcome))
-  }
+  $.ui.status(cfg.showRow ? undefined : statusText(clock, cfg, await $.clock.now(), keeps.length, outcome))
+  $.ui.invalidate('ui.render')
 }
 
 // ---------- actions ----------
@@ -298,14 +303,28 @@ async function keepWarm($: EngineInterface): Promise<string> {
 }
 
 async function compact($: EngineInterface): Promise<string> {
+  const before = compactions
   // Headless sessions (-p, the SDK) compact only through the /compact command for now.
-  const result = await $.session.compact().catch(async () => {
+  const result: { skip?: string; tokensAfter?: number } = await $.session.compact().catch(async () => {
     await $.command.run({ command: 'compact' })
-    return { skip: undefined }
+    return {}
   })
   if (result.skip) return `Compaction skipped: ${result.skip}`
-  outcome = 'compacted'
+  // This plugin's session.compact hook may not see its own compaction: settle it here then.
+  if (compactions === before) afterCompaction(result.tokensAfter)
   return 'Compacted the conversation before its cache expired.'
+}
+
+// A compaction replaces the conversation with its summary: the old cache has nothing left to save,
+// and the next message writes the summary whatever the clock says. The live usage still reads the
+// size before compaction until the next answer, so the size is the compaction's own count.
+function afterCompaction(tokensAfter: number | undefined) {
+  compactions += 1
+  context = tokensAfter ?? 0
+  ackedAt = undefined
+  held = undefined
+  outcome = 'compacted'
+  Object.assign(clock, { lastWarmAt: undefined, stopped: undefined, settled: false })
 }
 
 async function handoff($: EngineInterface): Promise<string> {
@@ -323,6 +342,85 @@ async function handoff($: EngineInterface): Promise<string> {
   })
   await $.session.append({ message: { type: 'system', content: [{ type: 'text', text: `Cache keeper cleared the conversation before its cache expired. Claude has this handoff:\n\n${text}` }] } })
   return 'Cleared the conversation with a handoff.'
+}
+
+// ---------- the held message ----------
+
+export type HeldChoice = 'send' | 'compact' | 'clear' | 'discard'
+
+// What the card above the prompt says of a held message: why it was held, what sending it costs.
+export function heldCard(
+  h: Pick<Held, 'text' | 'canResend' | 'doing' | 'note'>,
+  s: Clock,
+  cfg: Config,
+  now: number,
+  context: number,
+  price: Price | undefined,
+): { reason: string; preview: string; sendLabel: string; doing?: string; note?: string } {
+  const ago = s.lastWarmAt !== undefined ? ` ${duration(now - s.lastWarmAt - cfg.cacheTtlMinutes * 60_000)} ago` : ''
+  const cost = price ? usd((context * price.write) / 1e6) : undefined
+  const warm = price ? ` (a warm cache would read it for ${usd((context * price.read) / 1e6)})` : ''
+  const line = h.text.trim().split('\n')[0] ?? ''
+  return {
+    reason: `Message held: the cache went cold${ago}. Sending it re-writes ${tokens(context)} tokens${cost ? ` ≈ ${cost}` : ''}${warm}.`,
+    preview: line.length > 120 ? `${line.slice(0, 119)}…` : line,
+    sendLabel: h.canResend ? `Send anyway${cost ? ` · ${cost}` : ''}` : 'Put it back to send',
+    ...(h.doing ? { doing: h.doing } : {}),
+    ...(h.note ? { note: h.note } : {}),
+  }
+}
+
+// Takes the held text out of the prompt box, where a host that keeps a refused draft left it.
+async function takeDraft($: EngineInterface, text: string) {
+  const box = await $.prompt.read()
+  if (box.text.trim() === text.trim()) await $.prompt.fill({ text: '' })
+}
+
+async function chooseHeld($: EngineInterface, choice: HeldChoice) {
+  const h = held
+  if (!h || h.doing) return
+  try {
+    if (choice === 'discard') {
+      held = undefined
+      // The next message is guarded again.
+      ackedAt = undefined
+      await takeDraft($, h.text)
+    } else if (choice === 'send' && h.canResend) {
+      held = undefined
+      ackedAt = undefined
+      coldWritePending = true
+      await takeDraft($, h.text)
+      // This plugin's own guard never sees its own submission.
+      void $.prompt.submit({ text: h.text, asUser: true })
+    } else if (choice === 'send') {
+      // Images can't be submitted again from here: the text goes back in the box, and the guard
+      // lets the next Enter through.
+      held = undefined
+      const box = await $.prompt.read()
+      if (box.text.trim() !== h.text.trim()) await $.prompt.fill({ text: h.text })
+      $.ui.log('cache-keeper: your message is back in the prompt box; press Enter to send it (attach its images again if they are gone).')
+    } else if (choice === 'compact') {
+      held = { ...h, doing: 'Compacting… a minute or two for a long conversation.', note: undefined }
+      await refresh($)
+      const before = compactions
+      const said = await compact($)
+      if (compactions === before) {
+        held = { ...h, doing: undefined, note: said }
+      } else {
+        await takeDraft($, h.text)
+        void $.prompt.submit({ text: h.text, asUser: true })
+      }
+    } else {
+      held = { ...h, doing: 'Clearing…' }
+      await refresh($)
+      await $.command.run({ command: 'clear' })
+      held = undefined
+      await $.prompt.fill({ text: h.text })
+    }
+  } catch (error) {
+    held = { ...h, doing: undefined, note: `That failed: ${error instanceof Error ? error.message : String(error)}` }
+  }
+  await refresh($)
 }
 
 async function tick($: EngineInterface) {
@@ -379,6 +477,140 @@ function report(now: number): string {
   return lines.join('\n')
 }
 
+// ---------- the settings pane ----------
+
+const PANE = 'cache-keeper'
+const KEEP_HOURS = [0, 1, 2, 4, 8]
+const EXPIRY_LABELS: Record<AtExpiry, [label: string, hint: string]> = {
+  nothing: ['Let it expire', 'the next message re-writes the whole conversation'],
+  compact: ['Compact', 'compacts while warm; the next message caches only the summary'],
+  handoff: ['Hand off', 'Claude writes a handoff, then the conversation is cleared'],
+}
+const GUARD_LABELS: Record<Guard, [label: string, hint: string]> = {
+  refuse: ['Hold it', 'held above the prompt with its price and your choices'],
+  warn: ['Warn', 'shows the price and sends'],
+  off: ['Off', 'sends without a word'],
+}
+
+// The keep-warm windows offered, with this session's own (from /keepwarm 90m, say) among them.
+export function keepChoices(cfg: Config): number[] {
+  const hours = cfg.keepWarm ? cfg.keepWarmHours : 0
+  return KEEP_HOURS.includes(hours) ? KEEP_HOURS : [...KEEP_HOURS, hours].sort((a, b) => a - b)
+}
+
+async function setFromPane($: EngineInterface, patch: Patch) {
+  overrides = { ...overrides, ...patch }
+  paneNote = undefined
+  await refresh($)
+}
+
+async function keepWarmFromPane($: EngineInterface) {
+  if (pinging || acting) return
+  pinging = acting = true
+  paneNote = undefined
+  await refresh($)
+  try {
+    paneNote = await keepWarm($)
+  } catch (error) {
+    paneNote = `Keep-warm failed: ${error instanceof Error ? error.message : String(error)}`
+  } finally {
+    pinging = acting = false
+  }
+  await refresh($)
+}
+
+// The pane /keepwarm opens: the cache now, this session's settings as buttons, and the receipts.
+// Its Buttons are the surface's own (a desktop's native ones); a press that crosses a redraw can be
+// lost, and this pane redraws about once a minute while idle.
+async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
+  const { Box, Text, Button } = $.ui.resolve(e)
+  const cfg = effective()
+  const now = await $.clock.now()
+  const p = price()
+  const last = keeps.at(-1)
+  const row = rowParts(clock, cfg, now, { keeps: keeps.length, lastPing: last ? { read: last.read, usd: last.usd } : undefined, context, price: p, outcome })
+  const color = row?.state === 'warm' ? 'success' : row?.state === 'cold' ? 'warning' : 'subtle'
+  const hours = cfg.keepWarm ? cfg.keepWarmHours : 0
+  const changed = (Object.keys(overrides) as (keyof Patch)[]).some(k => overrides[k] !== config[k])
+  const chip = (key: string, label: string, on: boolean, patch: Patch) => (
+    <Button key={key} label={label} variant={on ? 'primary' : 'secondary'} onPress={() => void setFromPane($, patch)} />
+  )
+  const keepHint = [
+    hours > 0 ? "after Claude's last answer" : `the cache lapses ${duration(cfg.cacheTtlMinutes * 60_000)} after its last use`,
+    clock.holdUntil && clock.holdUntil > now && cfg.keepWarm ? `at least ${duration(clock.holdUntil - now)} more after a cold write` : undefined,
+  ].filter(Boolean)
+  const read = keeps.reduce((sum, k) => sum + k.read, 0)
+  const spent = keeps.length && keeps.every(k => k.usd !== undefined) ? ` · ${usd(keeps.reduce((sum, k) => sum + (k.usd ?? 0), 0))}` : ''
+  const paid = coldWrites.reduce((sum, w) => sum + (w.usd ?? 0), 0)
+  return (
+    <Box flexDirection="column">
+      <Box>
+        <Text color={color}>●</Text>
+        <Text dimColor> cache </Text>
+        <Text color={color} bold>
+          {row?.state ?? 'idle'}
+        </Text>
+        <Text dimColor>{` · ${row?.text ?? "nothing cached yet; the clock starts at Claude's first answer"}`}</Text>
+      </Box>
+      {context > 0 ? (
+        <Text dimColor>
+          {`${tokens(context)} tokens${model ? ` on ${model}` : ''}${p ? ` · a cold send ${usd((context * p.write) / 1e6)}, a warm one ${usd((context * p.read) / 1e6)}` : ''}`}
+        </Text>
+      ) : null}
+
+      <Text bold>{'\nKeep warm for'}</Text>
+      <Box gap={1} flexWrap="wrap">
+        {keepChoices(cfg).map(h => chip(`keep-${h}`, h === 0 ? 'Off' : duration(h * HOUR), h === hours, h === 0 ? { keepWarm: false } : { keepWarm: true, keepWarmHours: h }))}
+      </Box>
+      <Text dimColor>{keepHint.join(' · ')}</Text>
+      {clock.stopped ? <Text color="warning">{`Stopped until your next message: ${clock.stopped}.`}</Text> : null}
+
+      <Text bold>{'\nBefore it expires'}</Text>
+      <Box gap={1} flexWrap="wrap">
+        {(['nothing', 'compact', 'handoff'] as const).map(a => chip(`expiry-${a}`, EXPIRY_LABELS[a][0], cfg.atExpiry === a, { atExpiry: a }))}
+      </Box>
+      <Text dimColor>{EXPIRY_LABELS[cfg.atExpiry][1]}</Text>
+
+      <Text bold>{`\nA cold send over ${tokens(cfg.guardMinTokens)} tokens`}</Text>
+      <Box gap={1} flexWrap="wrap">
+        {(['refuse', 'warn', 'off'] as const).map(g => chip(`guard-${g}`, GUARD_LABELS[g][0], cfg.coldGuard === g, { coldGuard: g }))}
+      </Box>
+      <Text dimColor>{GUARD_LABELS[cfg.coldGuard][1]}</Text>
+
+      {row?.state === 'warm' || pinging ? (
+        <Box marginTop={1}>
+          {pinging ? <Text color="warning">Keeping warm…</Text> : <Button key="keep-now" label="Keep warm now" onPress={() => void keepWarmFromPane($)} />}
+        </Box>
+      ) : null}
+      {paneNote ? <Text dimColor>{paneNote}</Text> : null}
+
+      <Text bold>{'\nThis session'}</Text>
+      <Text dimColor>{keeps.length ? `${keeps.length} keep-warm${keeps.length === 1 ? '' : 's'} · read ${tokens(read)}${spent}` : 'No keep-warms yet'}</Text>
+      <Text dimColor>
+        {coldWrites.length
+          ? `${coldWrites.length} cold write${coldWrites.length === 1 ? '' : 's'} paid · ${tokens(coldWrites.reduce((sum, w) => sum + w.tokens, 0))} · ${usd(paid)}`
+          : 'No cold writes paid'}
+      </Text>
+      {p ? <Text dimColor>{`${breakEven(p)} keep-warms cost one cold write`}</Text> : null}
+
+      <Box marginTop={1} gap={1} alignItems="center">
+        <Text dimColor>This session only · defaults in /config</Text>
+        {changed ? (
+          <Button
+            key="reset"
+            label="Reset"
+            variant="secondary"
+            onPress={() => {
+              overrides = {}
+              void setFromPane($, {})
+            }}
+          />
+        ) : null}
+      </Box>
+    </Box>
+  )
+}
+
 function startTicker($: EngineInterface) {
   if (ticker) return
   ticker = $.clock.every(TICK_MS, () => void tick($))
@@ -390,6 +622,7 @@ function resetForClear() {
   coldWrites = []
   ackedAt = undefined
   coldWritePending = false
+  held = undefined
   Object.assign(clock, { lastWarmAt: undefined, lastActiveAt: undefined, holdUntil: undefined, stopped: undefined, settled: false })
 }
 
@@ -414,7 +647,7 @@ export const register: Register = (on, options) => {
     await $.command
       .register({
         name: 'keepwarm',
-        description: 'Cache keeper: show the cache and what it costs, or change keep-warm and the cold-send guard for this session',
+        description: "Cache keeper: open this session's cache settings, or change them with arguments",
         argumentHint: '[on|off] [2h|90m] [nothing|compact|handoff] [guard refuse|warn|off] [now]',
         immediate: true,
       })
@@ -475,8 +708,11 @@ export const register: Register = (on, options) => {
     // A turn none of whose steps was stamped started its last request no earlier than its end.
     if (clock.lastWarmAt === undefined || now - clock.lastWarmAt > e.durationMs) clock.lastWarmAt = now
     Object.assign(clock, { busy: false, settled: false, lastActiveAt: now, stopped: undefined })
+    // The first turn after a compaction writes the summary: no cold write, whatever it wrote.
+    const afterCompact = outcome === 'compacted'
     outcome = undefined
     ackedAt = undefined
+    held = undefined
     const u = e.usage
     if (u) {
       if (u.model) model = u.model
@@ -485,7 +721,7 @@ export const register: Register = (on, options) => {
       context = live && live > 0 ? live : u.input_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens
       const written = u.cache_creation_input_tokens
       // A cold write: the guard let one through, or this turn wrote half of a big context again.
-      if (coldWritePending || (before > 20_000 && written >= 0.5 * before)) {
+      if (coldWritePending || (!afterCompact && before > 20_000 && written >= 0.5 * before)) {
         const p = price()
         const cost = p ? (written * p.write) / 1e6 : undefined
         coldWrites.push({ at: now, tokens: written, usd: cost })
@@ -500,12 +736,12 @@ export const register: Register = (on, options) => {
     return done
   })
 
+  // A precompute installs nothing, and a skip leaves the conversation as it was.
   on('session.compact', async ($, e, next) => {
     const done = await next(e)
-    if (e.agentId === undefined) {
-      const live = (await $.session.usage().catch(() => undefined))?.context.tokens
-      context = live ?? 0
-      ackedAt = undefined
+    if (e.agentId === undefined && e.trigger !== 'precompute' && done.skip === undefined) {
+      afterCompaction(done.tokensAfter)
+      await refresh($)
     }
     return done
   })
@@ -527,13 +763,24 @@ export const register: Register = (on, options) => {
     if (verdict === 'resend') {
       ackedAt = undefined
       coldWritePending = true
+      held = undefined
+      await refresh($)
       return next(e)
     }
     ackedAt = clock.lastWarmAt
-    return { drop: `cache-keeper: ${said} Send it again to pay it.${hold} Or /compact or /clear first if you only need the conclusions.` }
+    held = { text: e.text, canResend: !e.attachments?.length }
+    await refresh($)
+    return { drop: `cache-keeper: ${said} Your message is held above the prompt: send it anyway, compact or clear first, or discard it. Sending it again also pays it.${hold}` }
   })
 
+  // Bare, it opens the settings pane; with arguments (or `status`), it answers in text, which is
+  // also what a surface that places no pane (a phone, a -p run) gets.
   on('command.run', { command: ['keepwarm', 'cache-keeper:keepwarm'] }, async ($, e) => {
+    if (!e.args.trim()) {
+      const opened = await $.ui.open({ id: PANE, title: 'Cache keeper' }).catch((error: unknown) => ({ isPlaced: false as const, reason: String(error) }))
+      if (opened.isPlaced) return { text: 'Cache keeper settings are open in the pane.' }
+      return { text: report(await $.clock.now()) }
+    }
     const parsed = parseArgs(e.args)
     if ('error' in parsed) return { text: parsed.error }
     overrides = { ...overrides, ...parsed.patch }
@@ -544,34 +791,57 @@ export const register: Register = (on, options) => {
     return { text: `${said}${report(now)}` }
   })
 
-  // One row above the prompt: the cache's state, its time left, the keep-warms and their cost.
+  // Above the prompt: one row with the cache's state, its time left, the keep-warms and their cost;
+  // and while the guard holds a message, a card with its choices.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const rest = await next(e)
     const cfg = effective()
-    if (!cfg.showRow || e.props.hasSurvey || (e.surface !== 'terminal' && e.surface !== 'desktop')) return rest
+    if (e.props.hasSurvey || (e.surface !== 'terminal' && e.surface !== 'desktop')) return rest
+    const now = await $.clock.now()
     const last = keeps.at(-1)
-    const row = rowParts(clock, cfg, await $.clock.now(), {
-      keeps: keeps.length,
-      lastPing: last ? { read: last.read, usd: last.usd } : undefined,
-      context,
-      price: price(),
-      outcome,
-    })
-    if (!row) return rest
-    const { Box, Text } = $.ui.resolve(e)
-    const color = row.state === 'warm' ? 'success' : row.state === 'cold' ? 'warning' : 'subtle'
+    const row = cfg.showRow
+      ? rowParts(clock, cfg, now, { keeps: keeps.length, lastPing: last ? { read: last.read, usd: last.usd } : undefined, context, price: price(), outcome })
+      : undefined
+    const card = held ? heldCard(held, clock, cfg, now, context, price()) : undefined
+    if (!row && !card) return rest
+    const { Box, Text, Button } = $.ui.resolve(e)
+    const color = row?.state === 'warm' ? 'success' : row?.state === 'cold' ? 'warning' : 'subtle'
     return (
       <Box flexDirection="column">
         {rest}
-        <Box>
-          <Text color={color}>●</Text>
-          <Text dimColor> cache </Text>
-          <Text color={color} bold>
-            {row.state}
-          </Text>
-          <Text dimColor>{` · ${row.text}`}</Text>
-        </Box>
+        {row ? (
+          <Box>
+            <Text color={color}>●</Text>
+            <Text dimColor> cache </Text>
+            <Text color={color} bold>
+              {row.state}
+            </Text>
+            <Text dimColor>{` · ${row.text}`}</Text>
+          </Box>
+        ) : null}
+        {card ? (
+          <Box flexDirection="column" width="100%" borderStyle="round" borderColor="warning" paddingX={1}>
+            <Text>{card.reason}</Text>
+            <Text dimColor wrap="truncate-end">{`“${card.preview}”`}</Text>
+            {card.note ? <Text color="error">{card.note}</Text> : null}
+            {card.doing ? (
+              <Text color="warning">{card.doing}</Text>
+            ) : (
+              <Box flexDirection="column">
+                <Box gap={1} flexWrap="wrap">
+                  <Button key="held-send" hotkey="1" label={card.sendLabel} variant="primary" onPress={() => chooseHeld($, 'send')} />
+                  <Button key="held-compact" hotkey="2" label="Compact, then send" onPress={() => chooseHeld($, 'compact')} />
+                  <Button key="held-clear" hotkey="3" label="Clear, keep draft" onPress={() => chooseHeld($, 'clear')} />
+                  <Button key="held-discard" hotkey="4" label="Discard" dimColor onPress={() => chooseHeld($, 'discard')} />
+                </Box>
+                {e.surface === 'terminal' ? <Text dimColor>click one, or ctrl+x tab then 1–4</Text> : null}
+              </Box>
+            )}
+          </Box>
+        ) : null}
       </Box>
     )
   })
+
+  on('ui.render', { component: 'Pane', requestId: PANE }, ($, e) => renderPane($, e))
 }

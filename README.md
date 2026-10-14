@@ -7,7 +7,7 @@ Mods for [Claude Code](https://claude.com/claude-code): plugins of function hook
 | [room](plugins/room) | An **agent room**: one chat with OpenAI Codex, Cursor and a second Claude, with `@mentions` and agent-to-agent hand-offs. Also one-shot `/second-opinion` reviews of your diff and `/delegate` implementations. |
 | [mod-firewall](plugins/mod-firewall) | A firewall for mods. Every network request, program, secrets-file read and secret env var another mod touches goes through it: ask, block or log. It also catches a mod trying to send your `.env` values or API keys anywhere. |
 | [switchboard](plugins/switchboard) | See and message your other Claude Code sessions: who's working on what, `/dm`, `/broadcast`, `/handoff`, an inbox that holds incoming messages for approval, and warnings when another session edited the same file. |
-| [cache-keeper](plugins/cache-keeper) | Keeps an idle session's prompt cache warm while you're away, so coming back doesn't re-write the whole conversation. You choose for how long, and whether it then lets the cache expire, compacts, or clears with a handoff. A big conversation that went cold anyway gets its next message stopped once, with the price of re-writing it. |
+| [cache-keeper](plugins/cache-keeper) | Keeps an idle session's prompt cache warm while you're away, so coming back doesn't re-write the whole conversation. You choose for how long, and whether it then lets the cache expire, compacts, or clears with a handoff. A big conversation that went cold anyway has its next message held, with the price of re-writing it and buttons to send anyway, compact first, clear, or discard. `/keepwarm` opens a pane to set it for the session. |
 
 ## Install
 
@@ -19,7 +19,7 @@ In a Claude Code terminal session:
 
 Answer `y` to add the marketplace, pick a scope (user is the usual choice), and the mod is active in that session. Sessions started afterwards load it too, including the desktop app's Code tab.
 
-While this repository is private, installing needs a GitHub login with access to it (Claude Code clones it with your git credentials).
+Swap `room` for any mod in the table above, such as `/plugin install cache-keeper --marketplace bbarney7/claude-code-mods`.
 
 Each mod's README lists what else it needs. `room`, for example, uses the Codex, Cursor and Claude ACP adapters.
 

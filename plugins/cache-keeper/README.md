@@ -1,6 +1,6 @@
 # cache-keeper
 
-Keeps an idle session's prompt cache warm while you're away, for as long as you choose, then lets it expire, compacts it, or clears it with a handoff, before the cache goes cold. When a big conversation has gone cold anyway, it stops the message that would re-write it once and shows what that costs.
+Keeps an idle session's prompt cache warm while you're away, for as long as you choose, then lets it expire, compacts it, or clears it with a handoff, before the cache goes cold. When a big conversation has gone cold anyway, it holds the message that would re-write it, shows what that costs, and lets you send it anyway, compact first, clear, or discard it.
 
 ```
 /plugin install cache-keeper --marketplace bbarney7/claude-code-mods
@@ -30,7 +30,7 @@ The keep-warm itself read 62,931 cached tokens and wrote 177.
 | Before the cache finally expires | `nothing` (let it expire), `compact` (compact while the cache is still warm, so the next message re-caches only the summary), `handoff` (Claude writes a handoff, the conversation is cleared, and the handoff is kept for your next message) | `nothing` |
 | Cache lifetime | minutes: 60 on Claude subscriptions, 5 for most API-key sessions | 60 |
 | Act this many minutes before expiry | minutes, at most half the lifetime | 5 |
-| Before a costly cold send | `refuse` (drop it once with its price), `warn`, `off` | `refuse` |
+| Before a costly cold send | `refuse` (hold it with its price and the choices), `warn`, `off` | `refuse` |
 | Guard conversations of at least | tokens | 50,000 |
 | Show the cache row above the prompt | on / off | on |
 
@@ -38,7 +38,16 @@ With keep-warm on for 2 hours and `compact`, a session you walk away from stays 
 
 ## `/keepwarm`
 
-`/keepwarm` shows the cache's time left and what will happen. With arguments it changes this session only:
+`/keepwarm` opens the cache keeper pane (beside the conversation on the desktop, in a pane in the terminal). It changes this session only:
+
+- **Keep warm for**: Off, 1h, 2h, 4h or 8h after Claude's last answer (a window set with `/keepwarm 90m` shows beside them).
+- **Before it expires**: Let it expire, Compact, or Hand off.
+- **A cold send over 50k tokens**: Hold it, Warn, or Off.
+- **Keep warm now**, while the cache is warm, and what it read and cost.
+- The cache's state, what a cold or warm send of it costs, this session's keep-warms, cold writes paid and the break-even.
+- **Reset** returns to your `/config` defaults.
+
+With arguments it changes the same settings from the prompt and answers in text:
 
 ```
 /keepwarm off              stop keeping this session warm
@@ -46,25 +55,36 @@ With keep-warm on for 2 hours and `compact`, a session you walk away from stays 
 /keepwarm 90m handoff      keep it warm for 90 minutes, then clear with a handoff
 /keepwarm now              keep-warm right away and show what it read from the cache
 /keepwarm guard warn       show a cold send's price instead of stopping it once
+/keepwarm status           the card below, as text (where no pane is drawn, as on a phone)
 ```
 
 Above the prompt (terminal and desktop), one row shows the cache: `● cache warm · 42m left · kept warm 2× · last ping read 75k $0.02 · then compact`, or `● cache cold · for 2h · the next send re-writes 330k ($2.64)`. With **Show the cache row** off, the status line shows `🔥 cache 42m · kept warm 2×` instead.
 
-`/keepwarm` with no arguments is the card: the context size and what a cold or warm send of it costs on your model, the keep-warms and their receipts, the break-even (how many keep-warms cost one cold write), and the cold writes this session has paid.
+`/keepwarm status` is the card: the context size and what a cold or warm send of it costs on your model, the keep-warms and their receipts, the break-even (how many keep-warms cost one cold write), and the cold writes this session has paid.
 
 ## The cold-send guard
 
-When the cache has expired and the conversation is at least 50,000 tokens, the next message re-writes all of it at the cache-write price. The guard drops that message once and says so:
+When the cache has expired and the conversation is at least 50,000 tokens, the next message re-writes all of it at the cache-write price. The guard holds that message in a card above the prompt (terminal and desktop):
 
 ```
-cache-keeper: the prompt cache went cold 1h ago. Sending this re-writes up to 200,502 tokens at $8/MTok ≈ $1.60
-(a warm turn would have read it for $0.04). Send it again to pay it. Keep-warm then holds the cache for 3h.
-Or /compact or /clear first if you only need the conclusions.
+╭──────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Message held: the cache went cold 37m ago. Sending it re-writes 547k tokens ≈ $4.37           │
+│ (a warm cache would read it for $0.11).                                                       │
+│ “this part of the script is kinda confusing”                                                  │
+│ [ Send anyway · $4.37 ]  [ Compact, then send ]  [ Clear, keep draft ]  [ Discard ]           │
+╰──────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
-Send it again and it goes through. `/keepwarm guard warn` shows the price and sends; `/keepwarm guard off` says nothing (or set **Before a costly cold send** in `/config`). The guard only stops what a person typed: background tasks, schedules, other sessions and `-p` runs pass. A resumed session is checked from its first message, from the age and size Claude Code reports on resume, and its first line says when it resumes cold.
+- **Send anyway** sends it as you wrote it and pays the write. A message with pasted images goes back in the prompt box instead, and Enter sends it.
+- **Compact, then send** compacts the conversation, then sends it; it writes the summary instead of the whole conversation.
+- **Clear, keep draft** clears the conversation and puts the message back in the box to edit.
+- **Discard** drops it; the next message is checked again.
+
+In the terminal, click one, or ctrl+x tab then 1–4. Sending the same message again also goes through, which is how it works from your phone, where the card isn't drawn. `/keepwarm guard warn` shows the price and sends; `/keepwarm guard off` says nothing (or set **Before a costly cold send** in `/config`). The guard only stops what a person typed: background tasks, schedules, other sessions and `-p` runs pass. A resumed session is checked from its first message, from the age and size Claude Code reports on resume, and its first line says when it resumes cold.
 
 After a cold write is paid, keep-warm holds that cache for at least 3 hours, so it isn't paid twice in a day (unless keep-warm is off).
+
+A compaction, yours or the mod's, resets the guard: the next message writes the summary whatever the clock says, so it isn't held, and the row reads `● cache unknown · compacted · the next message caches the summary (10k)` until Claude answers.
 
 ## Prices
 

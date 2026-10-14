@@ -1,7 +1,7 @@
 {
   "name": "cache-keeper",
-  "version": "0.2.0",
-  "description": "Keeps an idle session's prompt cache warm for as long as you choose, then compacts or hands off before it expires; stops a costly cold send once with its price",
+  "version": "0.4.0",
+  "description": "Keeps an idle session's prompt cache warm for as long as you choose, then compacts or hands off before it expires; holds a costly cold send with its price and your choices; /keepwarm opens a pane with the session's settings",
   "author": {
     "name": "Brennen Barney"
   },
@@ -55,7 +55,7 @@
     "coldGuard": {
       "type": "string",
       "title": "Cache keeper: before a costly cold send",
-      "description": "When the cache has expired and the conversation is large, the next message re-writes all of it at the cache-write price. refuse: drop that message once with its price; sending it again goes through. warn: show the price and send. off: say nothing.",
+      "description": "When the cache has expired and the conversation is large, the next message re-writes all of it at the cache-write price. refuse: hold that message above the prompt with its price, to send anyway, compact first, clear, or discard; sending it again goes through. warn: show the price and send. off: say nothing.",
       "default": "refuse",
       "options": [
         "refuse",

@@ -38,8 +38,8 @@
     },
     {
       "name": "cache-keeper",
-      "description": "Keeps an idle session's prompt cache warm for as long as you choose, then compacts or hands off before it expires; stops a costly cold send once with its price",
-      "version": "0.2.0",
+      "description": "Keeps an idle session's prompt cache warm for as long as you choose, then compacts or hands off before it expires; holds a costly cold send with its price and your choices; /keepwarm opens a pane with the session's settings",
+      "version": "0.4.0",
       "author": {
         "name": "Brennen Barney"
       },
