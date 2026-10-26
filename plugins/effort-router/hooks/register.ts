@@ -301,12 +301,6 @@ const SVG_ICON = svgDoc(
   18,
   `<g fill="none" stroke="${ACCENT}" stroke-width="1.6" stroke-linecap="round"><circle cx="5" cy="4" r="2"/><circle cx="13" cy="6" r="2"/><path d="M5 6v8M13 8c0 3-4 3-7.2 5.2"/></g>`,
 )
-const svgSwitch = (on: boolean) =>
-  svgDoc(
-    36,
-    20,
-    `<rect x="0.5" y="0.5" width="35" height="19" rx="9.5" fill="${on ? ACCENT : TRACK}"/><circle cx="${on ? 26 : 10}" cy="10" r="7" fill="${on ? '#1f2420' : '#fafafa'}"/>`,
-  )
 const svgBars = (filled: number) =>
   svgDoc(
     16,

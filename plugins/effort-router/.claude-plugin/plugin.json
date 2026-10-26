@@ -1,6 +1,6 @@
 {
   "name": "effort-router",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Sets the effort of each main-conversation turn from how demanding its prompt is, rated by Jev (through OpenRouter or TypeSafe) with Haiku as the fallback",
   "author": {
     "name": "Brennen Barney"
