@@ -1,0 +1,113 @@
+{
+  "name": "effort-router",
+  "version": "0.6.0",
+  "description": "Sets the effort of each main-conversation turn from how demanding its prompt is, rated by Jev (through OpenRouter or TypeSafe) with Haiku as the fallback",
+  "author": {
+    "name": "Brennen Barney"
+  },
+  "homepage": "https://github.com/bbarney7/claude-code-mods/tree/main/plugins/effort-router",
+  "repository": "https://github.com/bbarney7/claude-code-mods",
+  "license": "MIT",
+  "keywords": [
+    "effort",
+    "reasoning",
+    "routing",
+    "cost",
+    "classifier",
+    "jev"
+  ],
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "openrouter_api_key": {
+      "type": "string",
+      "title": "OpenRouter API key",
+      "description": "OpenRouter key used to call Jev. Leave empty to use the OPENROUTER_API_KEY environment variable.",
+      "sensitive": true
+    },
+    "typesafe_api_key": {
+      "type": "string",
+      "title": "TypeSafe API key",
+      "description": "TypeSafe key used to call Jev directly. Leave empty to use the TYPESAFE_API_KEY environment variable.",
+      "sensitive": true
+    },
+    "jev_service": {
+      "type": "string",
+      "title": "Preferred Jev service",
+      "description": "Which service calls Jev when keys for both are found",
+      "options": [
+        "openrouter",
+        "typesafe"
+      ],
+      "default": "openrouter"
+    },
+    "trivial_effort": {
+      "type": "string",
+      "title": "Effort for trivial turns",
+      "description": "Acknowledgements, one-line answers, tiny mechanical edits",
+      "options": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "default": "low"
+    },
+    "standard_effort": {
+      "type": "string",
+      "title": "Effort for standard turns",
+      "description": "Ordinary features, fixes, explanations, reviews",
+      "options": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "default": "medium"
+    },
+    "hard_effort": {
+      "type": "string",
+      "title": "Effort for hard turns",
+      "description": "Design, multi-file builds, cross-cutting changes, hard debugging",
+      "options": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "default": "xhigh"
+    },
+    "unsure_effort": {
+      "type": "string",
+      "title": "Effort when unsure",
+      "description": "For a turn Jev is too unsure to rate, or no classifier answers. session keeps the session's own effort.",
+      "options": [
+        "session",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "default": "session"
+    },
+    "hard_threshold": {
+      "type": "number",
+      "title": "Rate hard from (%)",
+      "description": "A turn counts as hard once Jev gives hard at least this chance",
+      "min": 5,
+      "max": 95,
+      "default": 40
+    },
+    "trivial_threshold": {
+      "type": "number",
+      "title": "Rate trivial from (%)",
+      "description": "A turn counts as trivial only once Jev gives trivial at least this chance",
+      "min": 5,
+      "max": 99,
+      "default": 70
+    }
+  }
+}
