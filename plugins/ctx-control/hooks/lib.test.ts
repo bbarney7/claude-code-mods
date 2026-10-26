@@ -1287,7 +1287,7 @@ test('Other items from an earlier session show but are not counted', async ($, o
 
 test('long names get a hover card with the full name; short ones do not', async ($, on) => {
   const longName = 'superpowers:a-skill-whose-name-is-far-too-long-to-fit-in-a-narrow-context-pane-even-at-one-hundred-columns'
-  mock.store(on, { 'skills:known': [longName, 'tiny'] })
+  mock.store(on, { 'skills:known': [longName, 'tiny'], showCards: true })
   mock.env(on, { HOME: '/home/test' })
   mockUiApis(on)
   mockCatalogApis(on, [
@@ -1344,7 +1344,7 @@ test('a long file path gets a card that stays inside the list', async ($, on) =>
     await ui.press({ key: 'tab:files' })
     return ui
   }
-  mockPaneSession(on, '/files-hover')
+  mockPaneSession(on, '/files-hover', { showCards: true })
   const memory = '/home/test/.claude/projects/-Users-someone/memory/MEMORY.md'
 
   // One long path: too short a list for its card below or above, so blank room holds it.
@@ -1354,6 +1354,39 @@ test('a long file path gets a card that stays inside the list', async ($, on) =>
   expect(cards.some(card => card.text.includes('~/.claude/projects/-Users-someone/memory/MEMORY.md'))).toBe(true)
   expect(await one.find({ key: 'card-room' })).toBeDefined()
   await one.unmount()
+})
+
+test('hover cards stay off until Show details turns them on, and the choice is kept', async ($, on) => {
+  const longName = 'superpowers:a-skill-whose-name-is-far-too-long-to-fit-in-a-narrow-context-pane'
+  const stored = memoryStore(on, { 'skills:known': [longName] })
+  mock.env(on, { HOME: '/home/test' })
+  mockUiApis(on)
+  mockCatalogApis(on, [{ name: longName, description: 'Does a long thing.', source: 'plugin', plugin: 'superpowers' }])
+  on('session.start', (_$, e) => ({ cwd: e.cwd }))
+  const mount = () => $.ui.mount({
+    plugin: 'ctx-control', surface: 'terminal', component: 'Pane', requestId: 'ctx-control',
+    viewport: { columns: 160, rows: 80, isFullscreen: true },
+    props: { ...DESKTOP_PROPS, bodyColumns: 40 },
+  })
+  await $.session.start({ cwd: '/cards', surface: null, isInteractive: false })
+
+  let ui = await mount()
+  expect(await ui.find({ key: `hover:item:skill:${longName}` })).toBeUndefined()
+  expect((await ui.find({ key: 'toggle-cards' }))?.text).toContain('Show details')
+  await ui.press({ key: 'toggle-cards' })
+  expect(await ui.find({ key: `hover:item:skill:${longName}` })).toBeDefined()
+  expect((await ui.find({ key: 'toggle-cards' }))?.text).toContain('Hide details')
+  expect(stored.get('showCards')).toBe(true)
+  await ui.unmount()
+
+  // A new session reads the choice back.
+  await $.session.start({ cwd: '/cards', surface: null, isInteractive: false })
+  ui = await mount()
+  expect(await ui.find({ key: `hover:item:skill:${longName}` })).toBeDefined()
+  await ui.press({ key: 'toggle-cards' })
+  expect(await ui.find({ key: `hover:item:skill:${longName}` })).toBeUndefined()
+  expect(stored.get('showCards')).toBe(false)
+  await ui.unmount()
 })
 
 test('stored profiles are parsed defensively and found by name in any case', () => {

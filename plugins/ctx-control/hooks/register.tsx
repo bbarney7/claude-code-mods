@@ -71,6 +71,9 @@ const expandedToolGroups = atom(
 const profileNaming = atom({ plugin: 'ctx-control', key: 'profileNaming' } as const, false)
 const profileDraft = atom({ plugin: 'ctx-control', key: 'profileDraft' } as const, '')
 const profileDeleting = atom({ plugin: 'ctx-control', key: 'profileDeleting' } as const, '')
+// Whether rows show their hover cards; off until the person turns it on, kept across sessions.
+const showCards = atom({ plugin: 'ctx-control', key: 'showCards' } as const, false)
+const SHOW_CARDS_KEY = 'showCards'
 const INVALIDATED = [
   'prompt.context',
   'prompt.section',
@@ -924,6 +927,12 @@ async function setActiveTab($: EngineInterface, value: CatalogTab): Promise<void
   await update($, page, () => 0)
 }
 
+async function toggleShowCards($: EngineInterface): Promise<void> {
+  const next = !(await read($, showCards))
+  await update($, showCards, () => next)
+  await trySet($, SHOW_CARDS_KEY, next)
+}
+
 async function setFilter($: EngineInterface, value: string): Promise<void> {
   await update($, filter, () => value)
   await update($, page, () => 0)
@@ -1634,6 +1643,8 @@ export const register: Register = (on, options) => {
     await loadPresetAtSessionStart($, e.cwd)
     await loadProfiles($, e.cwd)
     await loadServerNameHints($)
+    const storedShowCards = await $.store.get(SHOW_CARDS_KEY).catch(() => undefined)
+    await update($, showCards, () => storedShowCards === true)
     await refreshAvailableCatalog($, e.cwd)
     // In the background: counting takes a few seconds and the pane redraws when it lands. MCP
     // servers keep connecting for a while after start, so read again once they've settled.
@@ -1854,7 +1865,8 @@ export const register: Register = (on, options) => {
     const sent = summary.total
     const bodyColumns = Math.max(1, Math.floor(e.props.bodyColumns))
     const compact = e.surface === 'terminal'
-    const canHover = e.surface !== 'mobile'
+    const cardsOn = await read($, showCards)
+    const canHover = e.surface !== 'mobile' && cardsOn
     const padX = compact ? 1 : 2
     const contentColumns = Math.max(1, bodyColumns - padX * 2)
     const folder = folderLabel(cwd, homeDir)
@@ -2238,6 +2250,18 @@ export const register: Register = (on, options) => {
               />
             )}
           </Box>
+          {e.surface !== 'mobile' && (
+            <Box flexShrink={0}>
+              <Button
+                key="toggle-cards"
+                hotkey="i"
+                plain
+                dimColor={!cardsOn}
+                label={cardsOn ? 'Hide details' : 'Show details'}
+                onPress={() => { void toggleShowCards($) }}
+              />
+            </Box>
+          )}
           <Box flexShrink={0}>
             <Button
               key="toggle-filtered"

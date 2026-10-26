@@ -10,8 +10,9 @@ item or group to change it. Skills, tools, files, and other startup context have
 separate tabs with filtering and paging. Eager tool rows cycle through Sent,
 On demand, and Blocked. Deferred tools remain searchable until blocked. Each tool
 group has a Block all / Unblock all button; unblocking keeps each tool's Sent or
-On demand choice. Blocking an MCP server also covers tools that server adds later. Hover a row whose name
-or description is cut off to see all of it, with its token count.
+On demand choice. Blocking an MCP server also covers tools that server adds later. Turn on Show details
+(`i`) and hover a row whose name or description is cut off to see all of it, with
+its token count. Details stay off until you turn them on, and the choice is kept.
 
 Profiles are named sets of what's on, on demand, hidden, and blocked, such as a
 Coding profile without vidIQ or Tella and an Editing one without rea or

@@ -10,6 +10,7 @@ declare module 'claude-code' {
       profileNaming: boolean
       profileDraft: string
       profileDeleting: string
+      showCards: boolean
     }
   }
 }
