@@ -1,0 +1,15 @@
+{
+  "name": "ctx-control",
+  "version": "0.6.0",
+  "description": "See and control the skills, tools, files, and other context sent with every message",
+  "author": { "name": "Brennen Barney" },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "openOnStart": {
+      "type": "boolean",
+      "title": "Context: open pane when a session starts",
+      "description": "Open the Context pane at the start of every interactive session.",
+      "default": false
+    }
+  }
+}

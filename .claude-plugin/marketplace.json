@@ -19,7 +19,7 @@
     {
       "name": "mod-firewall",
       "description": "A firewall for Claude Code mods: watches what every other mod does (network, processes, secret files, env vars) and asks, blocks or logs",
-      "version": "0.1.1",
+      "version": "0.1.3",
       "author": {
         "name": "Brennen Barney"
       },
@@ -44,6 +44,16 @@
         "name": "Brennen Barney"
       },
       "source": "./plugins/cache-keeper",
+      "category": "productivity"
+    },
+    {
+      "name": "ctx-control",
+      "description": "See and control the skills, tools, files, and other context sent with every message",
+      "version": "0.6.0",
+      "author": {
+        "name": "Brennen Barney"
+      },
+      "source": "./plugins/ctx-control",
       "category": "productivity"
     },
     {

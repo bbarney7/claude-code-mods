@@ -2,6 +2,8 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Origin, PluginRegisterUses, Register, RenderInput } from 'claude-code'
 
 import type { Activity, Category, ModRecord, Risk, Severity, Verdict } from '../types'
+import { paneBody } from './pane'
+import type { PaneAction, PaneProps } from './pane'
 
 const SELF = 'mod-firewall'
 const PANE = 'mod-firewall'
@@ -64,7 +66,8 @@ export function isRiskyWrite(path: string, projectRoot: string, home: string): b
 // Well-known token shapes, so a secret is caught even when it never sat in a .env file.
 const TOKEN_PATTERNS: readonly [string, RegExp][] = [
   ['an Anthropic API key', /sk-ant-[A-Za-z0-9_-]{20,}/],
-  ['an OpenAI API key', /sk-(proj-)?[A-Za-z0-9_-]{32,}/],
+  ['an OpenRouter API key', /sk-or-v1-[A-Za-z0-9]{32,}/],
+  ['an OpenAI API key', /sk-(?!ant-|or-)(proj-)?[A-Za-z0-9_-]{32,}/],
   ['a GitHub token', /\b(gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,})\b/],
   ['an AWS access key', /\bAKIA[0-9A-Z]{16}\b/],
   ['a Slack token', /\bxox[abprs]-[A-Za-z0-9-]{10,}/],
@@ -99,7 +102,9 @@ export function findSecrets(text: string, known: ReadonlyMap<string, string>): s
   return found
 }
 
-export type Check = { category: Category; severity: Severity; target: string; reason: string }
+// `grant` names what an "allow for this session" or "always allow" answer to a critical call covers:
+// these secrets to this destination, so the same mod sending another secret, or elsewhere, still asks.
+export type Check = { category: Category; severity: Severity; target: string; reason: string; grant?: string }
 
 export function checkFetch(url: string, init: { method?: string; headers?: Record<string, string>; body?: string; socketPath?: string } | undefined, known: ReadonlyMap<string, string>): Check {
   const method = (init?.method ?? 'GET').toUpperCase()
@@ -108,9 +113,13 @@ export function checkFetch(url: string, init: { method?: string; headers?: Recor
     host = new URL(url).host
   } catch {}
   const target = init?.socketPath ? `${method} ${url} (via socket ${init.socketPath})` : `${method} ${host}`
+  const destination = init?.socketPath ? 'a local socket' : host
   const secrets = findSecrets([url, init?.body ?? '', ...Object.values(init?.headers ?? {})].join('\n'), known)
-  if (secrets.length) return { category: 'network', severity: 'critical', target, reason: `the request contains ${secrets.join(', ')}` }
-  return { category: 'network', severity: 'sensitive', target, reason: `network request to ${init?.socketPath ? 'a local socket' : host}` }
+  if (secrets.length) {
+    const sent = secrets.join(', ')
+    return { category: 'network', severity: 'critical', target, reason: `send ${sent} to ${destination}`, grant: `${sent} to ${init?.socketPath ?? host}` }
+  }
+  return { category: 'network', severity: 'sensitive', target, reason: `network request to ${destination}` }
 }
 
 export function checkRead(path: string): Check {
@@ -168,11 +177,13 @@ export function badgesFor(uses: PluginRegisterUses): { badges: string[]; risk: R
 
 export type Decision = 'allow' | 'ask' | 'block' | 'flag'
 
+// `isSessionAllowed` is an answer given for this very call: the kind of call, or for a critical one the
+// secret and destination it was granted for. Trust alone never lets a secret out.
 export function decide(mode: Mode, severity: Severity, isTrusted: boolean, isBlockedMod: boolean, isSessionAllowed: boolean): Decision {
   if (severity === 'info') return 'allow'
   if (isBlockedMod) return 'block'
   if (mode === 'audit') return 'flag'
-  if (severity === 'critical') return mode === 'strict' ? 'block' : 'ask'
+  if (severity === 'critical') return isSessionAllowed ? 'allow' : mode === 'strict' ? 'block' : 'ask'
   if (isTrusted || isSessionAllowed) return 'allow'
   return mode === 'strict' ? 'block' : 'ask'
 }
@@ -190,6 +201,7 @@ let projectRoot = ''
 let home = ''
 let known = new Map<string, string>()
 let rememberedTrust: string[] = []
+let rememberedGrants: string[] = []
 const sessionAllowed = new Set<string>()
 const blockedMods = new Set<string>()
 const pendingAsks = new Map<string, Promise<boolean>>()
@@ -198,6 +210,7 @@ let seq = 0
 const ALLOW_ONCE = 'Allow once'
 const ALLOW_SESSION = 'Allow for this session'
 const ALWAYS = 'Always trust this mod'
+const ALWAYS_SEND = 'Always allow sending this there'
 const BLOCK = 'Block'
 
 async function loadSecrets($: EngineInterface) {
@@ -210,8 +223,32 @@ async function loadSecrets($: EngineInterface) {
     } catch {}
   }
   known = found
+  await reloadTrust($)
+  await reloadGrants($)
+}
+
+// The store is shared by every session of this plugin: read it fresh, so a trust given in another
+// open session counts here, and a write here keeps what the others added.
+async function reloadTrust($: EngineInterface): Promise<string[]> {
   const stored = await $.store.get('trusted')
   rememberedTrust = Array.isArray(stored) ? stored.filter((x): x is string => typeof x === 'string') : []
+  return rememberedTrust
+}
+
+async function reloadGrants($: EngineInterface): Promise<string[]> {
+  const stored = await $.store.get('secretGrants')
+  rememberedGrants = Array.isArray(stored) ? stored.filter((x): x is string => typeof x === 'string') : []
+  return rememberedGrants
+}
+
+// What an answer to this call is remembered under: the kind of call, or the secret and its destination.
+function grantKey(mod: string, check: Check): string {
+  return check.grant ? `${mod}:secret:${check.grant}` : `${mod}:${check.category}`
+}
+
+async function setGrants($: EngineInterface, fn: (grants: string[]) => string[]) {
+  rememberedGrants = fn(await reloadGrants($))
+  await $.store.set('secretGrants', rememberedGrants)
 }
 
 function isTrusted(mod: string): boolean {
@@ -219,17 +256,20 @@ function isTrusted(mod: string): boolean {
 }
 
 async function setTrust($: EngineInterface, mod: string, trusted: boolean) {
-  rememberedTrust = trusted ? [...new Set([...rememberedTrust, mod])] : rememberedTrust.filter(name => name !== mod)
+  const stored = await reloadTrust($)
+  rememberedTrust = trusted ? [...new Set([...stored, mod])] : stored.filter(name => name !== mod)
   if (trusted) blockedMods.delete(mod)
   await $.store.set('trusted', rememberedTrust)
+  if (!trusted) await setGrants($, grants => grants.filter(key => !key.startsWith(`${mod}:`)))
   await touchMod($, mod, m => m)
 }
 
 async function setBlocked($: EngineInterface, mod: string, blocked: boolean) {
   if (blocked) {
     blockedMods.add(mod)
-    rememberedTrust = rememberedTrust.filter(name => name !== mod)
+    rememberedTrust = (await reloadTrust($)).filter(name => name !== mod)
     await $.store.set('trusted', rememberedTrust)
+    await setGrants($, grants => grants.filter(key => !key.startsWith(`${mod}:`)))
   } else blockedMods.delete(mod)
   await touchMod($, mod, m => m)
 }
@@ -264,18 +304,19 @@ async function record($: EngineInterface, mod: string, check: Check, verdict: Ve
 
 // Asks once per mod and kind of call at a time: a burst of identical calls shares one dialog.
 async function ask($: EngineInterface, mod: string, check: Check): Promise<boolean> {
-  const key = `${mod}:${check.category}:${check.severity}`
+  const key = `${grantKey(mod, check)}:${check.severity}`
   const waiting = pendingAsks.get(key)
   if (waiting) return waiting
   const asking = (async () => {
-    const options = check.severity === 'critical' ? [ALLOW_ONCE, BLOCK] : [ALLOW_ONCE, ALLOW_SESSION, ALWAYS, BLOCK]
+    const options = check.severity === 'critical' ? [ALLOW_ONCE, ALLOW_SESSION, ALWAYS_SEND, BLOCK] : [ALLOW_ONCE, ALLOW_SESSION, ALWAYS, BLOCK]
     const warning = check.severity === 'critical' ? '⚠ ' : ''
     try {
       const answer = await $.ui.ask(`${warning}The mod "${mod}" wants to ${check.reason}. Allow it?`, { options, header: 'Mod firewall' })
-      if (answer === ALLOW_SESSION) sessionAllowed.add(`${mod}:${check.category}`)
+      if (answer === ALLOW_SESSION) sessionAllowed.add(grantKey(mod, check))
       if (answer === ALWAYS) await setTrust($, mod, true)
+      if (answer === ALWAYS_SEND) await setGrants($, grants => [...new Set([...grants, grantKey(mod, check)])])
       if (answer === BLOCK) await setBlocked($, mod, true)
-      return answer === ALLOW_ONCE || answer === ALLOW_SESSION || answer === ALWAYS
+      return answer === ALLOW_ONCE || answer === ALLOW_SESSION || answer === ALWAYS || answer === ALWAYS_SEND
     } catch {
       // Dismissed, or nobody to ask (a -p run): the call does not go through.
       return false
@@ -293,7 +334,14 @@ async function ask($: EngineInterface, mod: string, check: Check): Promise<boole
 async function judge($: EngineInterface, origin: Origin, check: Check): Promise<string | undefined> {
   if (!isPoliced(origin)) return undefined
   const mod = origin.plugin
-  const decision = decide(config.mode, check.severity, isTrusted(mod), blockedMods.has(mod), sessionAllowed.has(`${mod}:${check.category}`))
+  const key = grantKey(mod, check)
+  const granted = () => sessionAllowed.has(key) || rememberedGrants.includes(key)
+  let decision = decide(config.mode, check.severity, isTrusted(mod), blockedMods.has(mod), granted())
+  if (decision === 'ask' && check.severity !== 'critical' && !isTrusted(mod) && (await reloadTrust($)).includes(mod)) decision = 'allow'
+  // Granted in another open session since this one last looked.
+  if (decision !== 'allow' && check.grant && !granted() && (await reloadGrants($)).includes(key)) {
+    decision = decide(config.mode, check.severity, isTrusted(mod), blockedMods.has(mod), true)
+  }
   if (decision === 'allow') {
     await record($, mod, check, check.severity === 'info' ? 'info' : 'allowed')
     return undefined
@@ -316,49 +364,48 @@ const VERDICT_MARK: Record<Verdict, string> = { allowed: '✓', 'asked-allowed':
 const VERDICT_COLOR: Record<Verdict, string> = { allowed: 'green', 'asked-allowed': 'green', blocked: 'red', flagged: 'yellow', info: 'gray' }
 const RISK_COLOR: Record<Risk, string> = { low: 'green', medium: 'yellow', high: 'red' }
 
-async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
-  const { Box, Text, Button } = $.ui.resolve(e)
+async function paneProps($: EngineInterface, rows: number): Promise<PaneProps> {
   const list = await read($, mods)
   const feed = await read($, activity)
   const blocked = await read($, blockedCount)
-  const room = Math.max(5, (e.viewport?.rows ?? 30) - 8 - list.length * 3)
+  const room = Math.max(5, rows - 8 - list.length * 3)
+  return {
+    header: `mode: ${config.mode} · ${list.length} mods seen · ${blocked} calls blocked · /config to change`,
+    mods: list.map(mod => {
+      const trusted = isTrusted(mod.name)
+      const isBlocked = blockedMods.has(mod.name)
+      const state = mod.refused ? `refused at load: ${mod.refused}` : isBlocked ? 'blocked' : trusted ? 'trusted' : 'watched'
+      return {
+        name: mod.name,
+        color: RISK_COLOR[mod.risk],
+        summary: `${mod.risk} risk · ${state} · ${mod.allowed} allowed, ${mod.blocked} blocked`,
+        badges: mod.badges,
+        trusted,
+        blocked: isBlocked,
+        refused: Boolean(mod.refused),
+      }
+    }),
+    feed: feed.slice(-room).map(entry => ({
+      id: entry.id,
+      color: VERDICT_COLOR[entry.verdict],
+      dim: entry.verdict === 'info',
+      text: `${VERDICT_MARK[entry.verdict]} ${entry.mod}  ${entry.category}  ${entry.target.slice(0, 90)}${entry.verdict === 'blocked' ? '  (blocked)' : ''}`,
+    })),
+  }
+}
 
-  return (
-    <Box flexDirection="column">
-      <Text dimColor>{`mode: ${config.mode} · ${list.length} mods seen · ${blocked} calls blocked · /config to change`}</Text>
-      {list.length === 0 && <Text dimColor>No other mods have done anything yet.</Text>}
-      {list.map(mod => {
-        const trusted = isTrusted(mod.name)
-        const isBlocked = blockedMods.has(mod.name)
-        const state = mod.refused ? `refused at load: ${mod.refused}` : isBlocked ? 'blocked' : trusted ? 'trusted' : 'watched'
-        return (
-          <Box key={mod.name} flexDirection="column" marginTop={1}>
-            <Text>
-              <Text bold color={RISK_COLOR[mod.risk]}>{`${mod.name}`}</Text>
-              <Text dimColor>{`  ${mod.risk} risk · ${state} · ${mod.allowed} allowed, ${mod.blocked} blocked`}</Text>
-            </Text>
-            {mod.badges.length > 0 && <Text dimColor>{`  ${mod.badges.join(' · ')}`}</Text>}
-            {!mod.refused && (
-              <Box>
-                {!trusted && <Button key={`trust-${mod.name}`} label="Trust" onPress={() => setTrust($, mod.name, true)} />}
-                {trusted && <Button key={`untrust-${mod.name}`} label="Untrust" onPress={() => setTrust($, mod.name, false)} />}
-                {!isBlocked && <Button key={`block-${mod.name}`} label="Block" onPress={() => setBlocked($, mod.name, true)} />}
-                {isBlocked && <Button key={`unblock-${mod.name}`} label="Unblock" onPress={() => setBlocked($, mod.name, false)} />}
-              </Box>
-            )}
-          </Box>
-        )
-      })}
-      <Text bold>{'\nActivity'}</Text>
-      {feed.length === 0 && <Text dimColor>Nothing yet.</Text>}
-      {feed.slice(-room).map(entry => (
-        <Text key={entry.id} color={VERDICT_COLOR[entry.verdict]} dimColor={entry.verdict === 'info'}>
-          {`${VERDICT_MARK[entry.verdict]} ${entry.mod}  ${entry.category}  ${entry.target.slice(0, 90)}${entry.verdict === 'blocked' ? '  (blocked)' : ''}`}
-        </Text>
-      ))}
-      {feed.length > 0 && <Button key="clear" label="Clear activity" onPress={() => update($, activity, () => [])} />}
-    </Box>
-  )
+async function paneAction($: EngineInterface, a: PaneAction) {
+  if (a.type === 'clear') await update($, activity, () => [])
+  else if (a.type === 'trust' || a.type === 'untrust') await setTrust($, a.mod, a.type === 'trust')
+  else await setBlocked($, a.mod, a.type === 'block')
+}
+
+async function renderPane($: EngineInterface, e: RenderInput<'Pane'>) {
+  const elements = $.ui.resolve(e)
+  const props = await paneProps($, e.viewport?.rows ?? 30)
+  const Client = e.surface === 'desktop' && 'Client' in elements ? elements.Client : undefined
+  if (Client) return <Client key="firewall-pane" module="./pane.tsx" width="100%" props={props} />
+  return paneBody(elements, props, a => void paneAction($, a))
 }
 
 // ---------- registration ----------
@@ -436,6 +483,15 @@ export const register: Register = (on, options) => {
     }
     return next(e)
   }).catch(($, e, next) => next(e))
+
+  // The desktop's pane module posts the button pressed.
+  on('ui.message', async ($, e, next) => {
+    if (e.element !== 'firewall-pane') return next(e)
+    const a = e.data as PaneAction | undefined
+    const isModAction = (a?.type === 'trust' || a?.type === 'untrust' || a?.type === 'block' || a?.type === 'unblock') && typeof a.mod === 'string'
+    if (a && (isModAction || a.type === 'clear')) await paneAction($, a)
+    return {}
+  })
 
   on('ui.render', { component: 'Pane', requestId: 'mod-firewall' }, ($, e) => renderPane($, e))
 }

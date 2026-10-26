@@ -10,9 +10,9 @@ A firewall for Claude Code mods. Mods run inside Claude Code with your permissio
 
 Every engine call another mod makes passes through the firewall first, labelled with the mod that made it:
 
-| Kind of call | Info (logged, allowed) | Sensitive (ask, or block in strict) | Critical (always asks; strict blocks) |
+| Kind of call | Info (logged, allowed) | Sensitive (ask, or block in strict) | Critical (asks; strict blocks unless you allowed that secret to that site) |
 | --- | --- | --- | --- |
-| Network (`http.fetch`) | — | any request | a request whose URL, headers or body contain a value from your `.env` files or a known token shape (Anthropic, OpenAI, GitHub, AWS, Slack, Google keys, private keys) |
+| Network (`http.fetch`) | — | any request | a request whose URL, headers or body contain a value from your `.env` files or a known token shape (Anthropic, OpenAI, OpenRouter, GitHub, AWS, Slack, Google keys, private keys) |
 | Processes (`process.run`, `process.spawn`) | — | any program it starts | — |
 | File reads | ordinary files | secrets files: `.env*`, SSH keys, `*.pem`/`*.key`, `.aws/credentials`, `.npmrc`, `.netrc`, `gh` hosts, `.docker/config.json`, `.kube/config`, `~/.claude.json`, Codex auth | — |
 | File writes | inside the project, temp folders | outside the project, shell rc files, LaunchAgents, git hooks, `authorized_keys` | — |
@@ -25,11 +25,11 @@ Calls made by Claude Code itself, by its built-in plugins, and by plugins your a
 
 | Setting | Values | Default |
 | --- | --- | --- |
-| Mode | `ask`: sensitive calls open a dialog (Allow once / Allow for this session / Always trust this mod / Block). `strict`: sensitive calls are blocked unless the mod is trusted. `audit`: allow everything and log it. | `ask` |
+| Mode | `ask`: sensitive calls open a dialog (Allow once / Allow for this session / Always trust this mod / Block). `strict`: sensitive calls are blocked unless the mod is trusted. Critical calls offer Allow once / Allow for this session / Always allow sending this there / Block, where the last three cover only that secret going to that site. `audit`: allow everything and log it. | `ask` |
 | Trusted mods | comma-separated names; trusted mods skip the dialog for sensitive calls, but critical ones still ask | empty |
 | Refuse risky mods at load | refuse to load an untrusted mod whose source pairs the network with processes, files, secret env vars or the transcript | off |
 
-Mods you trust from the dialog or the pane are remembered across sessions. In a headless run (`claude -p`) nobody is there to answer, so `ask` behaves like `strict`. It fails closed.
+Mods you trust from the dialog or the pane are remembered across sessions, including sessions already open. **Allow for this session** is forgotten when the session ends. **Always allow sending this there** lets one mod send one secret to one site from then on (a mod that calls its own API with its own key, say); Block or Untrust in the pane forgets it. In a headless run (`claude -p`) nobody is there to answer, so `ask` behaves like `strict`. It fails closed.
 
 ## The pane
 
